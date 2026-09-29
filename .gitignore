@@ -4,3 +4,4 @@
 chip8
 *.c8s
 .DS_Store
+tests/run_tests

@@ -15,6 +15,14 @@ $(TARGET): $(OBJECTS)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 clean:
-	rm -f $(OBJECTS) $(TARGET)
+	rm -f $(OBJECTS) $(TARGET) $(TEST_BIN)
 
-.PHONY: all clean
+.PHONY: all clean test
+# Automated tests of the CPU core (no SDL needed): run with `make test`
+TEST_BIN = tests/run_tests
+
+test: $(TEST_BIN)
+	./$(TEST_BIN)
+
+$(TEST_BIN): tests/run_tests.cpp src/chip8.cpp src/chip8.h
+	$(CXX) -std=c++17 -Wall -Wextra -O2 -o $(TEST_BIN) tests/run_tests.cpp src/chip8.cpp

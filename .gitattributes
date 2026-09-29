@@ -1,0 +1,3 @@
+# ROM and savestate files are binary: never convert their line endings
+*.ch8 binary
+*.c8s binary
