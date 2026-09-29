@@ -1,5 +1,5 @@
 CXX = g++
-SDL_CFLAGS = $(shell sdl2-config --cflags)
+SDL_CFLAGS = $(shell sdl2-config --cflags) -I$(shell sdl2-config --prefix)/include
 SDL_LIBS = $(filter-out -mwindows,$(shell sdl2-config --libs))
 CXXFLAGS = -std=c++17 -Wall -Wextra -O2 $(SDL_CFLAGS)
 TARGET = chip8
