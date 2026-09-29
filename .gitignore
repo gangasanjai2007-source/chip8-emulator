@@ -1,1 +1,5 @@
 .vscode/
+*.o
+*.exe
+chip8
+*.c8s
