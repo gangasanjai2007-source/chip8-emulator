@@ -1,8 +1,11 @@
 # CHIP-8 Emulator — TatHack '26
 
+![Build and test](https://github.com/gangasanjai2007-source/chip8-emulator/actions/workflows/build.yml/badge.svg)
+
 A CHIP-8 emulator in C++ with SDL2 graphics and audio. We started from the partially broken TatHack
 codebase, found and fixed its bugs in the CPU, timing, rendering and audio, and added speed control,
-savestates, colour palettes, a switchable quirks mode and a pause/step debugger with a disassembler.
+savestates, colour palettes, rewind, a CRT effect, selectable sound waveforms, a switchable quirks mode
+and a pause/step debugger with a disassembler. Automated tests run on Linux, macOS and Windows on every push.
 
 **Team:** <!-- TODO: Name (GitHub @username) for all 4 members -->
 
@@ -55,6 +58,10 @@ Chip-8 Keypad:          Keyboard:
 | `=` / `-` | Increase / decrease emulation speed (1–100 instructions per frame) |
 | `P` | Cycle colour palette |
 | `M` | Toggle quirks mode: original CHIP-8 ↔ SUPER-CHIP |
+| `Tab` (hold) | Rewind time (up to 10 seconds) |
+| `G` / `H` | CRT phosphor fade on/off / scanlines on/off |
+| `T` | Next sound waveform: square → sine → triangle → sawtooth |
+| `[` / `]` | Beep pitch down / up by one musical semitone |
 | `F5` or `K` | Save state (`K` works on Macs, where F-keys need `fn`) |
 | `F9` or `L` | Load state |
 | `Space` | Pause / resume (prints CPU state) |
@@ -145,9 +152,50 @@ instructions, and games are written for one or the other. `M` switches between t
 
 With CHIP-8 mode the Timendus `5-quirks` test passes all six checks; Blinky needs SUPER-CHIP mode.
 
-### 6. Quality-of-life
+### 6. Rewind
+Hold `Tab` to run time backwards. Every frame, a copy of the whole machine (the `Chip8` object, ~6 KB
+of plain arrays) is pushed onto a history of the last 600 frames (10 seconds, ~4 MB). While `Tab` is
+held, one state per frame is popped off and restored, so the game plays backwards at normal speed.
+A `std::deque` is used so the oldest state can be dropped from the front in constant time. This
+reuses the same idea as savestates, but in memory instead of a file.
+
+### 7. CRT effect
+- **Phosphor fade (`G`, on by default):** each pixel has a brightness that jumps to 1.0 when lit and
+  decays by ×0.6 per frame when off; the colour is blended between the palette's background and
+  foreground. Real CRT phosphor glows briefly the same way. CHIP-8 games erase and redraw sprites
+  every frame, so this also removes most of the flicker.
+- **Scanlines (`H`):** a semi-transparent black line over every other row of screen pixels.
+
+### 8. Sound waveforms
+The beep is generated with a **phase accumulator**: each audio sample advances a phase by
+`frequency / sample_rate`, and the waveform function turns the phase into a sample
+(square, sine, triangle or sawtooth). This gives the exact frequency at whatever sample rate the
+sound card provides. `[` / `]` change the pitch by one semitone (×2^(1/12)), from 110 Hz to 1760 Hz.
+The settings are shared with SDL's audio thread, so they are only changed while holding
+`SDL_LockAudioDevice`.
+
+### 9. Quality-of-life
 Drag & drop ROM loading, `Backspace` restart, live status in the window title, software-renderer
 fallback when GPU acceleration is unavailable.
+
+---
+
+## Automated tests
+
+```bash
+make test
+```
+[`tests/run_tests.cpp`](tests/run_tests.cpp) runs the CPU core without a window:
+- runs the Timendus `corax+`, `flags` and `quirks` ROMs and compares the final screen with a
+  known-good result (a hash of the screen, recorded after checking by eye that every result is ✔);
+- checks that a savestate restores a game exactly, and that garbage/missing files are rejected
+  without touching the running game.
+
+We checked that the tests really catch bugs: putting the original `8XY5` borrow bug back makes the
+flags and quirks tests fail.
+
+**Continuous integration:** [GitHub Actions](.github/workflows/build.yml) builds the emulator and
+runs `make test` on **Linux, macOS and Windows (MSYS2)** on every push.
 
 ---
 
@@ -161,8 +209,10 @@ main.cpp (SDL2 front-end)                      chip8.cpp (CPU core)
 │  2. N × emulate_cycle ───────┼─────────────►│ emulate_cycle(): fetch →     │
 │  3. tick_timers (60 Hz)      │              │   decode → execute           │
 │  4. audio: beep if ST > 0    │◄─ display ───│ display[64*32]               │
-│  5. draw_graphics (palette)  │              │ save_state / load_state      │
-│  6. sleep rest of the frame  │              │ print_state (disassembler)   │
+│  5. draw_graphics (palette,  │              │ save_state / load_state      │
+│     phosphor, scanlines)     │              │ print_state (disassembler)   │
+│  6. push state for rewind    │              │                              │
+│  7. sleep rest of the frame  │              │                              │
 └──────────────────────────────┘              └──────────────────────────────┘
 ```
 - **Core / front-end split:** `Chip8` knows nothing about SDL, so the CPU can be tested and reasoned
@@ -186,7 +236,8 @@ main.cpp (SDL2 front-end)                      chip8.cpp (CPU core)
 We used AI tools significantly and want to be transparent about it:
 - **Claude (Anthropic)** reviewed the original code and identified the bugs, and wrote most of the
   final implementation of the fixes and features (speed control, savestates, palettes, quirks mode,
-  debugger/disassembler) plus this README.
+  debugger/disassembler, rewind, CRT effect, sound waveforms), the automated tests, the CI workflow
+  and this README.
 - **ChatGPT** was used by a team member for an earlier round of CPU fixes.
 - We set up the build on Windows (MSYS2) and macOS, ran every change against the Timendus test suite
   and the game ROMs, and reviewed the code so each of us can explain how it works.
