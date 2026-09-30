@@ -150,14 +150,39 @@ void app_update_title(App& app){
                      : app.rom_path.substr(app.rom_path.find_last_of("/\\") + 1);
     std::string title = "CHIP-8 | " + name +
                         " | Speed: " + std::to_string(app.s.cycles_per_frame) + " ops/frame" +
-                        " | Palette: " + PALETTES[app.s.palette].name +
+                        " | Palette: " + app_palette(app).name +
                         " | Mode: " + (app.chip8.cosmac_quirks ? "CHIP-8" : "SCHIP");
     if(app.s.rewinding) title += " | << REWIND";
     else if(app.s.paused) title += " | PAUSED";
     SDL_SetWindowTitle(app.window, title.c_str());
 }
 
-void app_load_rom(App& app, const std::string& path){
+const GameTheme& app_theme(const App& app){
+    const GameInfo* g = app.rom_path.empty() ? nullptr : find_game(app.rom_path);
+    return g ? g->theme : DEFAULT_THEME;
+}
+
+// The two screen colours: the game's own theme colours, or a palette the user picked (P)
+Palette app_palette(const App& app){
+    if(app.s.palette >= 0 && app.s.palette < NUM_PALETTES) return PALETTES[app.s.palette];
+    const GameTheme& t = app_theme(app);
+    return {t.name, t.on.r, t.on.g, t.on.b, t.off.r, t.off.g, t.off.b};
+}
+
+void app_go(App& app, Screen screen){
+    app.screen = screen;
+    app.screen_since = SDL_GetTicks64() / 1000.0;
+}
+
+bool app_load_rom(App& app, const std::string& path){
+    // Check the file first, so a bad ROM gives a clear message instead of a black screen
+    std::string problem = rom_problem(path);
+    if(!problem.empty()){
+        app.error_title = "Couldn't load this cartridge";
+        app.error_text = path + "\n\n" + problem;
+        std::cerr << "Can't load " << path << ": " << problem << std::endl;
+        return false;
+    }
     // Known games (games.h) get their recommended mode, speed and screen-refresh setting
     if(const GameInfo* g = find_game(path)){
         app.chip8.cosmac_quirks = !g->needs_schip;
@@ -174,12 +199,26 @@ void app_load_rom(App& app, const std::string& path){
     // For the ROMs we know, show their controls right away (see games.h)
     if(const GameInfo* g = find_game(path)){
         std::string keys = game_key_summary(*g);
-        app.status = std::string("Loaded ") + g->title + (keys.empty() ? "" : ": " + keys) + "  (see Help tab)";
+        app.status = std::string("Loaded ") + g->title + (keys.empty() ? "" : ": " + keys) + "   (F3: help)";
         app.open_help_tab = true;
         std::cout << app.status << std::endl;
     }
     else app.status = "Loaded " + path;
     app_update_title(app);
+    return true;
+}
+
+// Load a game and go to the game screen
+void app_play(App& app, const std::string& path){
+    if(app_load_rom(app, path)) app_go(app, SCREEN_GAME);
+}
+
+// Stop the game and go back to the library
+void app_exit_to_library(App& app){
+    app_eject(app);
+    if(app.play_mode) app_set_play_mode(app, false);
+    app.dev_view = false;
+    app_go(app, SCREEN_HUB);
 }
 
 void app_restart(App& app){
@@ -214,21 +253,18 @@ void app_set_sound(App& app, int waveform, double frequency){
     SDL_UnlockAudioDevice(app.audio_device);
 }
 
-void app_set_ui_visible(App& app, bool visible){
-    app.show_ui = visible;
-    if(visible) SDL_SetWindowSize(app.window, UI_W, UI_H);
-    else        SDL_SetWindowSize(app.window, CLASSIC_W, CLASSIC_H);
-}
-
 // F11: fullscreen "retro console" view (TV bezel only, no developer panels)
 void app_set_play_mode(App& app, bool on){
     app.play_mode = on;
     SDL_SetWindowFullscreen(app.window, on ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
-    if(!on) app_set_ui_visible(app, app.show_ui); // restore the previous window size
-    app.status = on ? "Play mode: F11 to return to the developer view" : "Developer view (F11 for play mode)";
+    if(!on){ // restore the normal window size
+        if(app.classic) SDL_SetWindowSize(app.window, CLASSIC_W, CLASSIC_H);
+        else SDL_SetWindowSize(app.window, UI_W, UI_H);
+    }
+    app.status = on ? "Fullscreen: F11 to leave" : "Windowed";
 }
 
-// Remove the cartridge: back to the start screen
+// Remove the cartridge (the library is shown by app_exit_to_library)
 void app_eject(App& app){
     bool mode = app.chip8.cosmac_quirks;
     app.chip8 = Chip8();
@@ -261,16 +297,21 @@ void update_layout(App& app){
         // Biggest whole-number scale that fits, so every CHIP-8 pixel is the same size
         int scale = std::max(1, std::min((ww - 160) / 64, (wh - 240) / 32));
         int sw = 64 * scale, sh = 32 * scale;
-        int sx = (ww - sw) / 2, sy = (wh - sh - 60) / 2;
+        int sx = (ww - sw) / 2, sy = (wh - sh) / 2;
         app.screen_rect = {sx, sy, sw, sh};
         app.bezel_rect  = {sx - 48, sy - 40, sw + 96, sh + 120};
     }
-    else if(app.show_ui){
+    else if(app.classic){
+        app.screen_rect = {0, 0, CLASSIC_W, CLASSIC_H}; // the original plain window
+        app.bezel_rect  = {0, 0, 0, 0};
+    }
+    else if(app.dev_view){
         app.screen_rect = {32, 14, 896, 448}; // 14 screen pixels per CHIP-8 pixel (7 in hi-res)
         app.bezel_rect  = {10, 2, 940, 504};
     }
     else{
-        app.screen_rect = {0, 0, CLASSIC_W, CLASSIC_H}; // the original plain window
+        // In-game HUD: the screen in the middle, top bar above, controls below (hub.cpp)
+        app.screen_rect = {192, 86, 896, 448};
         app.bezel_rect  = {0, 0, 0, 0};
     }
 }
@@ -278,9 +319,12 @@ void update_layout(App& app){
 void print_controls(){
     std::cout << "\nControls:\n"
               << "  CHIP-8 keypad : 1234 / QWER / ASDF / ZXCV\n"
-              << "  F1            : show / hide the control panels (mouse-driven)\n"
-              << "  F11           : play mode (fullscreen retro console view)\n"
-              << "  F2            : eject the cartridge (back to the start screen)\n"
+              << "  Library       : arrows select, Enter details, Space play, S settings, / search\n"
+              << "  Esc           : back / exit to the library (in the library: quit)\n"
+              << "  F1            : developer view (debugger, ROM browser, panels)\n"
+              << "  F3 / F4       : help / settings page\n"
+              << "  F11           : fullscreen\n"
+              << "  F2            : eject the cartridge (back to the library)\n"
               << "  = / -         : faster / slower emulation\n"
               << "  P             : next colour palette\n"
               << "  M             : toggle quirks mode (original CHIP-8 / SUPER-CHIP)\n"
@@ -293,8 +337,7 @@ void print_controls(){
               << "  Space         : pause / resume (prints CPU state)\n"
               << "  N             : step one instruction while paused\n"
               << "  Backspace     : restart ROM\n"
-              << "  Drag & drop   : a .ch8 file onto the window to load it\n"
-              << "  Esc           : quit\n" << std::endl;
+              << "  Drag & drop   : a .ch8 file onto the window to play it\n" << std::endl;
 }
 
 // ---------------- Keyboard and window events ----------------
@@ -311,17 +354,37 @@ void handle_input(App& app){
         if(event.type == SDL_DROPFILE){
             std::string path = event.drop.file;
             SDL_free(event.drop.file);
-            app_load_rom(app, path);
+            app_play(app, path);
         }
 
         // While typing in a text box in the panel, keys must not reach the game
         if(ImGui::GetIO().WantTextInput) continue;
 
+        // Library, details, settings and help pages: their keys are handled in hub.cpp
+        // (arrows, Enter, Space...). Only Esc (back) is handled here.
+        if(app.screen != SCREEN_GAME){
+            if(event.type == SDL_KEYDOWN && event.key.repeat == 0 && event.key.keysym.sym == SDLK_ESCAPE){
+                if(!app.error_text.empty()) app.error_text.clear();          // close the message box
+                else if(app.screen == SCREEN_HUB) app.confirm_quit = !app.confirm_quit;
+                else if(app.screen == SCREEN_DETAILS) app_go(app, SCREEN_HUB);
+                else{ // Settings / Help: back to where they were opened from
+                    if(app.back_to == SCREEN_GAME) s.paused = app.paused_before_page;
+                    app_go(app, app.back_to);
+                }
+            }
+            continue;
+        }
+
         if(event.type == SDL_KEYDOWN){
             SDL_Keycode k = event.key.keysym.sym;
             bool repeat = event.key.repeat != 0; // true when a key is held down
 
-            if(k == SDLK_ESCAPE) s.running = false;
+            // Esc leaves the game (in --classic mode, as in the original, it quits)
+            if(k == SDLK_ESCAPE && !repeat){
+                if(app.classic) s.running = false;
+                else app_exit_to_library(app);
+                continue;
+            }
 
             // ---- Emulation speed ----
             if(k == SDLK_EQUALS || k == SDLK_PLUS || k == SDLK_KP_PLUS){
@@ -334,13 +397,21 @@ void handle_input(App& app){
             }
 
             if(!repeat){
-                if(k == SDLK_F1 && !app.play_mode) app_set_ui_visible(app, !app.show_ui);
+                if(k == SDLK_F1 && !app.play_mode && !app.classic) app.dev_view = !app.dev_view;
                 if(k == SDLK_F11) app_set_play_mode(app, !app.play_mode);
-                if(k == SDLK_F2) app_eject(app);
+                if(k == SDLK_F2){ app_exit_to_library(app); continue; }
+                if((k == SDLK_F3 || k == SDLK_F4) && !app.classic){ // Help / Settings pages
+                    app.paused_before_page = s.paused;
+                    s.paused = true;
+                    app.back_to = SCREEN_GAME;
+                    if(app.play_mode) app_set_play_mode(app, false);
+                    app_go(app, k == SDLK_F3 ? SCREEN_HELP : SCREEN_SETTINGS);
+                    continue;
+                }
 
-                // ---- Colour palette ----
+                // ---- Colour palette: game theme colours -> each palette -> back ----
                 if(k == SDLK_p){
-                    s.palette = (s.palette + 1) % NUM_PALETTES;
+                    s.palette = (s.palette + 2) % (NUM_PALETTES + 1) - 1;
                     app_update_title(app);
                 }
                 // ---- Quirks mode ----
@@ -414,7 +485,7 @@ void handle_input(App& app){
 void run_frame(App& app){
     Settings& s = app.s;
     Chip8& chip8 = app.chip8;
-    if(app.rom_path.empty()) return; // nothing loaded yet
+    if(app.rom_path.empty() || app.screen != SCREEN_GAME) return; // nothing to run
 
     if(s.rewinding){
         // Step back one frame per frame, so time runs backwards at normal speed
@@ -508,6 +579,7 @@ int main(int argc, char** argv){
         SDL_Quit();
         return 1;
     }
+    app.renderer = renderer;
     // Texture holding one texel per CHIP-8 pixel; "0" = nearest-neighbour scaling (sharp pixels)
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");
     SDL_Texture* screen_tex = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
@@ -522,19 +594,24 @@ int main(int argc, char** argv){
     ImGui_ImplSDL2_InitForSDLRenderer(app.window, renderer);
     ImGui_ImplSDLRenderer2_Init(renderer);
 
+    // Find all the ROMs for the library (thumbnails are made during the first frames)
+    library_scan(app.library);
+    app_go(app, SCREEN_HUB);
+
     // Command line: chip8 [ROM file] [--schip] [--classic]
+    // With a ROM it starts straight in the game; without one it opens the library.
+    std::string start_rom;
+    bool force_schip = false;
     for(int i = 1; i < argc; i++){
         std::string arg = argv[i];
-        // Optional: start in SUPER-CHIP quirks mode (e.g. ./chip8 roms/Blinky.ch8 --schip)
-        if(arg == "--schip"){ app.chip8.cosmac_quirks = false; app.s.display_wait = false; }
-        else if(arg == "--classic") app.classic = true; // start without the panels
-        else app_load_rom(app, arg);
+        if(arg == "--schip") force_schip = true;        // e.g. ./chip8 roms/Blinky.ch8 --schip
+        else if(arg == "--classic") app.classic = true;  // original plain 640x320 window
+        else start_rom = arg;
     }
-    if(app.rom_path.empty()){
-        app.status = "Pick a game in the ROM browser (or drag a .ch8 file onto the window)";
-        app.classic = false; // the ROM browser is in the panels, so they must be visible
-    }
-    app_set_ui_visible(app, !app.classic);
+    if(!start_rom.empty()) app_play(app, start_rom);
+    if(force_schip){ app.chip8.cosmac_quirks = false; app.s.display_wait = false; }
+    if(app.screen != SCREEN_GAME) app.classic = false;   // the library needs the big window
+    if(app.classic) SDL_SetWindowSize(app.window, CLASSIC_W, CLASSIC_H);
     app_update_title(app);
     print_controls();
 
@@ -550,8 +627,8 @@ int main(int argc, char** argv){
         }
 
         // The audio callback runs on another thread, so lock while changing the flag
-        bool should_beep = (app.chip8.get_sound_timer() > 0 && !app.s.paused && !app.s.rewinding)
-                           || app.test_beep_frames > 0;
+        bool should_beep = (app.screen == SCREEN_GAME && app.chip8.get_sound_timer() > 0
+                            && !app.s.paused && !app.s.rewinding) || app.test_beep_frames > 0;
         if(app.test_beep_frames > 0) app.test_beep_frames--;
         if(app.audio_device != 0){
             SDL_LockAudioDevice(app.audio_device);
@@ -559,27 +636,34 @@ int main(int argc, char** argv){
             SDL_UnlockAudioDevice(app.audio_device);
         }
 
-        // Draw: background, TV bezel, game screen, then the panels on top
+        // Library thumbnails: a couple per frame until they are all made
+        library_make_thumbnails(app.library, renderer, 2);
+
+        // Draw. Order matters: first everything made with ImGui (themed background, frame,
+        // HUD, pages, panels), THEN the CHIP-8 screen on top with SDL, so nothing can ever
+        // cover the game picture.
         update_layout(app);
         SDL_SetRenderDrawColor(renderer, 16, 15, 18, 255);
         SDL_RenderClear(renderer);
-        if(app.bezel_rect.w > 0){
-            SDL_SetRenderDrawColor(renderer, 46, 42, 38, 255);  // plastic case
-            SDL_RenderFillRect(renderer, &app.bezel_rect);
-            SDL_Rect recess = {app.screen_rect.x - 8, app.screen_rect.y - 8,
-                               app.screen_rect.w + 16, app.screen_rect.h + 16};
-            SDL_SetRenderDrawColor(renderer, 12, 12, 12, 255);  // dark edge around the tube
-            SDL_RenderFillRect(renderer, &recess);
-        }
-        draw_graphics(renderer, screen_tex, app.chip8, PALETTES[app.s.palette], app.s, app.screen_rect);
 
-        // The panels, bezel labels and start screen are drawn with ImGui (ui.cpp)
         ImGui_ImplSDLRenderer2_NewFrame();
         ImGui_ImplSDL2_NewFrame();
         ImGui::NewFrame();
         ui_draw(app);
         ImGui::Render();
         ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), renderer);
+
+        if(app.screen == SCREEN_GAME)
+            draw_graphics(renderer, screen_tex, app.chip8, app_palette(app), app.s, app.screen_rect);
+
+        // Short fade-in after changing screens
+        double since = SDL_GetTicks64() / 1000.0 - app.screen_since;
+        if(since < 0.25){
+            SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+            SDL_SetRenderDrawColor(renderer, 0, 0, 0, (Uint8)(255 * (1.0 - since / 0.25)));
+            SDL_RenderFillRect(renderer, nullptr);
+            SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
+        }
         SDL_RenderPresent(renderer);
 
         // FIX: wait ONCE per frame (the old code waited 16 ms after EVERY
@@ -588,8 +672,12 @@ int main(int argc, char** argv){
         double elapsed_ms = (SDL_GetPerformanceCounter() - frame_start) * 1000.0
                             / SDL_GetPerformanceFrequency();
         if(elapsed_ms < FRAME_MS) SDL_Delay((Uint32)(FRAME_MS - elapsed_ms));
+        double total_ms = (SDL_GetPerformanceCounter() - frame_start) * 1000.0 / SDL_GetPerformanceFrequency();
+        app.fps = app.fps * 0.95f + (float)(1000.0 / std::max(total_ms, 1.0)) * 0.05f; // smoothed
     }
 
+    library_free(app.library);
+    if(app.preview.tex) SDL_DestroyTexture(app.preview.tex);
     ImGui_ImplSDLRenderer2_Shutdown();
     ImGui_ImplSDL2_Shutdown();
     ImGui::DestroyContext();

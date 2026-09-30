@@ -7,7 +7,7 @@ CXXFLAGS = -std=c++17 -Wall -Wextra -O2 $(SDL_CFLAGS) -Ithird_party/imgui -DIMGU
 TARGET = chip8
 
 # Our code
-SOURCES = src/main.cpp src/chip8.cpp src/ui.cpp
+SOURCES = src/main.cpp src/chip8.cpp src/ui.cpp src/hub.cpp src/library.cpp src/themes.cpp
 # Dear ImGui (on-screen panels), vendored in third_party/imgui
 IMGUI_SOURCES = third_party/imgui/imgui.cpp third_party/imgui/imgui_draw.cpp \
                 third_party/imgui/imgui_tables.cpp third_party/imgui/imgui_widgets.cpp \
@@ -20,7 +20,7 @@ $(TARGET): $(OBJECTS)
 	$(CXX) $(CXXFLAGS) -o $(TARGET) $(OBJECTS) $(SDL_LIBS)
 
 # Rebuild our files when the shared headers change
-src/main.o src/ui.o: src/app.h src/chip8.h src/games.h
+src/main.o src/ui.o src/hub.o src/library.o src/themes.o: src/app.h src/chip8.h src/games.h src/library.h src/ui_common.h
 src/chip8.o: src/chip8.h
 
 %.o: %.cpp

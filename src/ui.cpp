@@ -1,4 +1,5 @@
-// On-screen control panels, drawn with Dear ImGui (https://github.com/ocornut/imgui, MIT licence).
+// Developer view panels (F1 in a game), fonts and the colour theme, drawn with
+// Dear ImGui (https://github.com/ocornut/imgui, MIT licence).
 //
 // Dear ImGui is an "immediate mode" UI library: every frame we simply call functions like
 // ImGui::Button("Save"), and the call returns true on the frame the button is clicked.
@@ -14,6 +15,7 @@
 //   +--------------+-----------+------------+
 #include "app.h"
 #include "games.h"
+#include "ui_common.h"
 #include "imgui.h"
 #include <algorithm>
 #include <cctype>
@@ -94,9 +96,10 @@ static void help_tab(App& app){
         {"T",           "Next sound waveform"},
         {"[ / ]",       "Beep pitch down / up"},
         {"M",           "CHIP-8 / SUPER-CHIP mode"},
-        {"F1",          "Show / hide these panels"},
-        {"F11",         "Play mode: fullscreen retro console"},
-        {"F2",          "Eject the cartridge (start screen)"},
+        {"F1",          "Developer view on / off"},
+        {"F3 / F4",     "Help / Settings page"},
+        {"F11",         "Fullscreen"},
+        {"Esc or F2",   "Exit to the library"},
         {"Drag & drop", "Drop a .ch8 file to load it"},
         {"Esc",         "Quit"},
     };
@@ -138,9 +141,9 @@ static void side_panel(App& app){
             ImGui::EndDisabled();
             ImGui::SameLine();
             if(ImGui::Button("Restart")) app_restart(app);
-            if(ImGui::Button("Eject (F2)")) app_eject(app);
+            if(ImGui::Button("Exit to library (Esc)")) app_exit_to_library(app);
             ImGui::SameLine();
-            if(ImGui::Button("Play mode: fullscreen (F11)")) app_set_play_mode(app, true);
+            if(ImGui::Button("Fullscreen (F11)")) app_set_play_mode(app, true);
 
             // Rewind while the button is held down (same as holding Tab)
             static bool rewinding_by_mouse = false;
@@ -177,14 +180,16 @@ static void side_panel(App& app){
                                 app.chip8.hires ? " (hi-res)" : "");
 
             ImGui::SeparatorText("Display");
-            if(ImGui::BeginCombo("Palette (P)", PALETTES[s.palette].name)){
+            std::string theme_label = std::string("Game theme (") + app_theme(app).name + ")";
+            if(ImGui::BeginCombo("Palette (P)", s.palette < 0 ? theme_label.c_str() : PALETTES[s.palette].name)){
+                if(ImGui::Selectable(theme_label.c_str(), s.palette < 0)){ s.palette = -1; app_update_title(app); }
                 for(int i = 0; i < NUM_PALETTES; i++)
                     if(ImGui::Selectable(PALETTES[i].name, s.palette == i)){ s.palette = i; app_update_title(app); }
                 ImGui::EndCombo();
             }
             // The "Custom" palette can be edited with colour pickers
-            Palette& p = PALETTES[s.palette];
-            if(std::string(p.name) == "Custom"){
+            if(s.palette >= 0 && std::string(PALETTES[s.palette].name) == "Custom"){
+                Palette& p = PALETTES[s.palette];
                 float on[3]  = {p.on_r / 255.f,  p.on_g / 255.f,  p.on_b / 255.f};
                 float off[3] = {p.off_r / 255.f, p.off_g / 255.f, p.off_b / 255.f};
                 if(ImGui::ColorEdit3("Pixels", on)){
@@ -356,8 +361,10 @@ static void rom_browser_panel(App& app){
 }
 
 // ================= Retro look =================
-static ImFont* font_title = nullptr; // Press Start 2P, 16 px (arcade pixel font)
-static ImFont* font_big   = nullptr; // Press Start 2P, 32 px
+ImFont* font_small = nullptr; // Press Start 2P,  8 px (arcade pixel font)
+ImFont* font_title = nullptr; // Press Start 2P, 16 px
+ImFont* font_mid   = nullptr; // Press Start 2P, 24 px
+ImFont* font_big   = nullptr; // Press Start 2P, 32 px
 
 void ui_load_fonts(){
     ImGuiIO& io = ImGui::GetIO();
@@ -366,19 +373,18 @@ void ui_load_fonts(){
     const char* path = "assets/fonts/PressStart2P-Regular.ttf";
     std::error_code err;
     if(fs::exists(path, err)){
+        // Multiples of 8 px keep this pixel font perfectly sharp
+        font_small = io.Fonts->AddFontFromFileTTF(path, 8.0f);
         font_title = io.Fonts->AddFontFromFileTTF(path, 16.0f);
+        font_mid   = io.Fonts->AddFontFromFileTTF(path, 24.0f);
         font_big   = io.Fonts->AddFontFromFileTTF(path, 32.0f);
     }
 }
 
 // Retro theme: square corners, 1-pixel borders, and every colour derived from the
 // currently selected palette, so the whole interface matches the game screen.
-static void apply_theme(const Palette& pal){
-    // Use the brighter of the palette's two colours as the accent (Game Boy's "on" colour is dark)
-    int on_lum = pal.on_r + pal.on_g + pal.on_b, off_lum = pal.off_r + pal.off_g + pal.off_b;
-    float ar, ag, ab;
-    if(on_lum >= off_lum){ ar = pal.on_r / 255.f;  ag = pal.on_g / 255.f;  ab = pal.on_b / 255.f; }
-    else                 { ar = pal.off_r / 255.f; ag = pal.off_g / 255.f; ab = pal.off_b / 255.f; }
+static void apply_theme(Rgb accent_rgb){
+    float ar = accent_rgb.r / 255.f, ag = accent_rgb.g / 255.f, ab = accent_rgb.b / 255.f;
     auto accent = [&](float k, float a = 1.0f){ return ImVec4(ar * k, ag * k, ab * k, a); };
     auto tint   = [&](float t){ return ImVec4(ar + (1 - ar) * t, ag + (1 - ag) * t, ab + (1 - ab) * t, 1.0f); };
 
@@ -422,24 +428,32 @@ static void apply_theme(const Palette& pal){
     c[ImGuiCol_TextSelectedBg]       = accent(0.40f, 0.6f);
 }
 
-// The palette's accent colour (set by apply_theme), as a packed colour for drawing
-static ImU32 col_accent_u32(){ return ImGui::GetColorU32(ImGuiCol_CheckMark); }
-
-// Blinks at about 2 Hz, for "INSERT CARTRIDGE" style text
-static bool blink(){ return (int)(ImGui::GetTime() * 2.0) % 2 == 0; }
-
 // Text in the pixel font (falls back to the normal font if it wasn't found)
-static void pixel_text(ImDrawList* dl, ImFont* font, ImVec2 pos, ImU32 col, const char* text){
+void pixel_text(ImDrawList* dl, ImFont* font, ImVec2 pos, ImU32 col, const char* text){
     ImFont* f = font ? font : ImGui::GetFont();
     float size = font ? font->FontSize : ImGui::GetFontSize();
     dl->AddText(f, size, pos, col, text);
 }
 
-// Labels and lights on the TV bezel, drawn over the plastic frame main.cpp painted
+ImVec2 pixel_text_size(ImFont* font, const char* text){
+    ImFont* f = font ? font : ImGui::GetFont();
+    float size = font ? font->FontSize : ImGui::GetFontSize();
+    return f->CalcTextSizeA(size, FLT_MAX, 0.0f, text);
+}
+
+void glow_text(ImDrawList* dl, ImFont* font, ImVec2 pos, ImU32 colour, ImU32 glow, const char* text){
+    for(int dx = -2; dx <= 2; dx += 2)
+        for(int dy = -2; dy <= 2; dy += 2)
+            if(dx || dy) pixel_text(dl, font, ImVec2(pos.x + dx, pos.y + dy), glow, text);
+    pixel_text(dl, font, pos, colour, text);
+}
+
+// The TV case around the screen in the developer view, with its labels and lights
 static void draw_bezel(App& app){
     SDL_Rect b = app.bezel_rect, sc = app.screen_rect;
     if(b.w == 0) return;
     ImDrawList* dl = ImGui::GetBackgroundDrawList();
+    dl->AddRectFilled(ImVec2(b.x, b.y), ImVec2(b.x + b.w, b.y + b.h), IM_COL32(46, 42, 38, 255), 14.0f); // plastic case
 
     // Rounded corners and a thin highlight make the flat rectangles look like a TV case and tube
     dl->AddRect(ImVec2(b.x, b.y), ImVec2(b.x + b.w, b.y + b.h), IM_COL32(90, 84, 76, 255), 14.0f, 0, 3.0f);
@@ -466,103 +480,31 @@ static void draw_bezel(App& app){
     if(g) hint = game_key_summary(*g);
     if(app.s.rewinding) hint = "<< REWINDING";
     else if(app.s.paused) hint = "PAUSED - Space to resume";
-    if(app.play_mode) hint += hint.empty() ? "F11: exit play mode" : "   |   F11: exit";
+    if(hint.empty()) hint = "F1: back to the game view";
     ImVec2 ts = ImGui::CalcTextSize(hint.c_str());
     dl->AddText(ImVec2(sc.x + (sc.w - ts.x) / 2, label_y + 3), IM_COL32(220, 210, 190, 255), hint.c_str());
 }
 
-// Start screen shown when no cartridge is inserted: pick a game like on an old console
-static void start_screen(App& app){
-    SDL_Rect sc = app.screen_rect;
-    ImGui::SetNextWindowPos(ImVec2(sc.x, sc.y));
-    ImGui::SetNextWindowSize(ImVec2(sc.w, sc.h));
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0, 0, 0, 0));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-    ImGui::Begin("##start", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
-                                     ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus);
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    ImU32 col = ImGui::GetColorU32(ImGuiCol_CheckMark); // the palette's accent colour
-
-    // Title
-    const char* title = "CHIP-8";
-    ImFont* big = font_big ? font_big : ImGui::GetFont();
-    float big_size = font_big ? font_big->FontSize : ImGui::GetFontSize() * 3;
-    ImVec2 tsz = big->CalcTextSizeA(big_size, FLT_MAX, 0, title);
-    float cx = sc.x + sc.w / 2.0f, y = sc.y + sc.h * 0.10f;
-    dl->AddText(big, big_size, ImVec2(cx - tsz.x / 2, y), col, title);
-    if(blink()){
-        const char* sub = "INSERT CARTRIDGE";
-        ImFont* f = font_title ? font_title : ImGui::GetFont();
-        float fs = font_title ? font_title->FontSize : ImGui::GetFontSize();
-        ImVec2 ssz = f->CalcTextSizeA(fs, FLT_MAX, 0, sub);
-        dl->AddText(f, fs, ImVec2(cx - ssz.x / 2, y + big_size + 18), col, sub);
-    }
-
-    // One "cartridge" card per built-in game that exists on disk, in a 3-column grid
-    static const char* const carts[] = {
-        "roms/Pong.ch8", "roms/Tetris.ch8", "roms/Blinky.ch8",
-        "roms/games/DinoRun.ch8", "roms/games/Br8kout.ch8", "roms/games/SuperPong.ch8",
-        "roms/games/Snek.ch8", "roms/games/Outlaw.ch8", "roms/games/CaveExplorer.ch8"};
-    std::vector<const char*> found;
-    std::error_code err;
-    for(const char* c : carts) if(fs::exists(c, err)) found.push_back(c);
-    if(!found.empty()){
-        const int COLS = 3;
-        int rows = ((int)found.size() + COLS - 1) / COLS;
-        float gap = 12.0f;
-        float top = sc.h * 0.30f, bottom = sc.h - 40.0f;   // space between the title and the footer
-        float card_w = std::min(270.0f, (sc.w - 60.0f - (COLS - 1) * gap) / COLS);
-        float card_h = std::min(120.0f, (bottom - top - (rows - 1) * gap) / rows);
-        float total_w = COLS * card_w + (COLS - 1) * gap;
-        float x0 = (sc.w - total_w) / 2.0f;
-        for(size_t i = 0; i < found.size(); i++){
-            const GameInfo* g = find_game(found[i]);
-            int col = (int)i % COLS, row = (int)i / COLS;
-            ImGui::SetCursorPos(ImVec2(x0 + col * (card_w + gap), top + row * (card_h + gap)));
-            char id[16];
-            std::snprintf(id, sizeof(id), "##cart%d", (int)i);
-            bool pressed = ImGui::Button(id, ImVec2(card_w, card_h));
-            pressed |= ImGui::IsKeyPressed((ImGuiKey)(ImGuiKey_1 + (int)i), false); // keys 1-9
-            // Card contents drawn on top of the button: number, title, one line about it, controls
-            ImVec2 p = ImGui::GetItemRectMin();
-            ImVec4 clip(p.x + 6, p.y + 4, p.x + card_w - 6, p.y + card_h - 4);
-            char num[16];
-            std::snprintf(num, sizeof(num), "[%d]", (int)i + 1);
-            pixel_text(dl, font_title, ImVec2(p.x + 8, p.y + 8), col_accent_u32(), num);
-            pixel_text(dl, font_title, ImVec2(p.x + 58, p.y + 8), ImGui::GetColorU32(ImGuiCol_Text),
-                       g ? g->title : found[i]);
-            if(g){
-                if(card_h >= 90)
-                    dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(p.x + 8, p.y + 32),
-                                ImGui::GetColorU32(ImGuiCol_TextDisabled), g->about, nullptr, card_w - 16, &clip);
-                std::string keys = game_key_summary(*g);
-                if(keys.empty()) keys = "All 16 keys";
-                // Below the title; long control lists wrap onto a second or third line
-                float keys_y = (card_h >= 90) ? p.y + card_h - 36 : p.y + 34;
-                dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(p.x + 8, keys_y),
-                            col_accent_u32(), keys.c_str(), nullptr, card_w - 16, &clip);
-            }
-            if(pressed){
-                app_load_rom(app, found[i]); // applies the game's recommended settings too
-                break;
-            }
-        }
-    }
-    const char* foot = "Press 1-9 or click a cartridge  -  other ROMs: ROM browser (F1) or drag & drop";
-    ImVec2 fsz = ImGui::CalcTextSize(foot);
-    dl->AddText(ImVec2(cx - fsz.x / 2, sc.y + sc.h - 28), ImGui::GetColorU32(ImGuiCol_TextDisabled), foot);
-    ImGui::End();
-    ImGui::PopStyleVar();
-    ImGui::PopStyleColor();
-}
-
+// Draws the frame's UI. The in-game developer view (F1) uses the panels in this file;
+// everything else (library, details, settings, help, in-game HUD) is in hub.cpp.
 void ui_draw(App& app){
-    apply_theme(PALETTES[app.s.palette]);
-    draw_bezel(app);
-    if(app.rom_path.empty()) start_screen(app);
-    if(app.show_ui && !app.play_mode){
+    bool in_game = (app.screen == SCREEN_GAME);
+    if(in_game && app.classic) return; // --classic: just the game, like the original
+    // The whole interface takes its accent colour from the game (or a neutral arcade pink)
+    bool game_page = in_game || app.screen == SCREEN_HELP ||
+                     (app.screen == SCREEN_SETTINGS && app.back_to == SCREEN_GAME);
+    Rgb accent = game_page ? app_theme(app).accent
+               : (app.screen == SCREEN_SETTINGS ? Rgb{0, 220, 255} : Rgb{255, 70, 170});
+    if(app.screen == SCREEN_DETAILS && !app.library.entries.empty())
+        accent = app.library.entries[std::min(app.selected, (int)app.library.entries.size() - 1)].theme.accent;
+    apply_theme(accent);
+
+    if(in_game && app.dev_view && !app.play_mode){
+        draw_bezel(app);
         side_panel(app);
         debugger_panel(app);
         rom_browser_panel(app);
+        hub_overlays(app);
     }
+    else hub_draw(app);
 }
