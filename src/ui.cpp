@@ -63,7 +63,7 @@ static void help_tab(App& app){
 
         // One click sets the mode and speed this game needs
         bool mode_ok = (app.chip8.cosmac_quirks == !g->needs_schip);
-        if(!mode_ok || app.s.cycles_per_frame != g->speed){
+        if(!mode_ok || app.s.cycles_per_frame != g->speed || app.s.display_wait != g->vblank){
             char label[96];
             std::snprintf(label, sizeof(label), "Apply: %s mode, speed %d",
                           g->needs_schip ? "SUPER-CHIP" : "CHIP-8", g->speed);
@@ -166,8 +166,13 @@ static void side_panel(App& app){
             int mode = app.chip8.cosmac_quirks ? 0 : 1;
             if(ImGui::Combo("Mode (M)", &mode, "CHIP-8 (original)\0SUPER-CHIP\0")){
                 app.chip8.cosmac_quirks = (mode == 0);
+                s.display_wait = (mode == 0); // the original CHIP-8 waits, SUPER-CHIP doesn't
                 app_update_title(app);
             }
+            ImGui::Checkbox("Wait for screen refresh", &s.display_wait);
+            if(ImGui::IsItemHovered())
+                ImGui::SetTooltip("At most one sprite draw per frame, like the original 1977 machine.\n"
+                                  "Newer games (written for the Octo emulator) expect this off.");
             ImGui::TextDisabled("Resolution: %dx%d%s", app.chip8.screen_width(), app.chip8.screen_height(),
                                 app.chip8.hires ? " (hi-res)" : "");
 
@@ -417,6 +422,9 @@ static void apply_theme(const Palette& pal){
     c[ImGuiCol_TextSelectedBg]       = accent(0.40f, 0.6f);
 }
 
+// The palette's accent colour (set by apply_theme), as a packed colour for drawing
+static ImU32 col_accent_u32(){ return ImGui::GetColorU32(ImGuiCol_CheckMark); }
+
 // Blinks at about 2 Hz, for "INSERT CARTRIDGE" style text
 static bool blink(){ return (int)(ImGui::GetTime() * 2.0) % 2 == 0; }
 
@@ -490,48 +498,57 @@ static void start_screen(App& app){
         dl->AddText(f, fs, ImVec2(cx - ssz.x / 2, y + big_size + 18), col, sub);
     }
 
-    // One "cartridge" card per built-in game that exists on disk
-    static const char* const carts[] = {"roms/Pong.ch8", "roms/Tetris.ch8", "roms/Blinky.ch8"};
+    // One "cartridge" card per built-in game that exists on disk, in a 3-column grid
+    static const char* const carts[] = {
+        "roms/Pong.ch8", "roms/Tetris.ch8", "roms/Blinky.ch8",
+        "roms/games/DinoRun.ch8", "roms/games/Br8kout.ch8", "roms/games/SuperPong.ch8",
+        "roms/games/Snek.ch8", "roms/games/Outlaw.ch8", "roms/games/CaveExplorer.ch8"};
     std::vector<const char*> found;
     std::error_code err;
     for(const char* c : carts) if(fs::exists(c, err)) found.push_back(c);
-
     if(!found.empty()){
-        float card_w = std::min(260.0f, (sc.w - 60.0f) / 3.0f), card_h = std::min(150.0f, sc.h * 0.36f);
-        float total = found.size() * card_w + (found.size() - 1) * 20.0f;
-        float x0 = (sc.w - total) / 2.0f, y0 = sc.h * 0.44f;
+        const int COLS = 3;
+        int rows = ((int)found.size() + COLS - 1) / COLS;
+        float gap = 12.0f;
+        float top = sc.h * 0.30f, bottom = sc.h - 40.0f;   // space between the title and the footer
+        float card_w = std::min(270.0f, (sc.w - 60.0f - (COLS - 1) * gap) / COLS);
+        float card_h = std::min(120.0f, (bottom - top - (rows - 1) * gap) / rows);
+        float total_w = COLS * card_w + (COLS - 1) * gap;
+        float x0 = (sc.w - total_w) / 2.0f;
         for(size_t i = 0; i < found.size(); i++){
             const GameInfo* g = find_game(found[i]);
-            ImGui::SetCursorPos(ImVec2(x0 + i * (card_w + 20.0f), y0));
+            int col = (int)i % COLS, row = (int)i / COLS;
+            ImGui::SetCursorPos(ImVec2(x0 + col * (card_w + gap), top + row * (card_h + gap)));
             char id[16];
             std::snprintf(id, sizeof(id), "##cart%d", (int)i);
             bool pressed = ImGui::Button(id, ImVec2(card_w, card_h));
-            pressed |= ImGui::IsKeyPressed((ImGuiKey)(ImGuiKey_1 + (int)i), false); // keys 1, 2, 3
-
-            // Card contents drawn on top of the button
+            pressed |= ImGui::IsKeyPressed((ImGuiKey)(ImGuiKey_1 + (int)i), false); // keys 1-9
+            // Card contents drawn on top of the button: number, title, one line about it, controls
             ImVec2 p = ImGui::GetItemRectMin();
+            ImVec4 clip(p.x + 6, p.y + 4, p.x + card_w - 6, p.y + card_h - 4);
             char num[16];
             std::snprintf(num, sizeof(num), "[%d]", (int)i + 1);
-            pixel_text(dl, font_title, ImVec2(p.x + 10, p.y + 10), col, num);
-            pixel_text(dl, font_title, ImVec2(p.x + 60, p.y + 10), ImGui::GetColorU32(ImGuiCol_Text),
+            pixel_text(dl, font_title, ImVec2(p.x + 8, p.y + 8), col_accent_u32(), num);
+            pixel_text(dl, font_title, ImVec2(p.x + 58, p.y + 8), ImGui::GetColorU32(ImGuiCol_Text),
                        g ? g->title : found[i]);
             if(g){
-                ImVec4 clip(p.x + 8, p.y + 34, p.x + card_w - 8, p.y + card_h - 6);
-                dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(p.x + 10, p.y + 40),
-                            ImGui::GetColorU32(ImGuiCol_Text), g->about, nullptr, card_w - 20, &clip);
+                if(card_h >= 90)
+                    dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(p.x + 8, p.y + 32),
+                                ImGui::GetColorU32(ImGuiCol_TextDisabled), g->about, nullptr, card_w - 16, &clip);
                 std::string keys = game_key_summary(*g);
-                dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(p.x + 10, p.y + card_h - 36),
-                            col, keys.c_str(), nullptr, card_w - 20, &clip);
+                if(keys.empty()) keys = "All 16 keys";
+                // Below the title; long control lists wrap onto a second or third line
+                float keys_y = (card_h >= 90) ? p.y + card_h - 36 : p.y + 34;
+                dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(p.x + 8, keys_y),
+                            col_accent_u32(), keys.c_str(), nullptr, card_w - 16, &clip);
             }
             if(pressed){
-                app_load_rom(app, found[i]);
-                app_apply_recommended(app); // e.g. Blinky switches to SUPER-CHIP by itself
+                app_load_rom(app, found[i]); // applies the game's recommended settings too
                 break;
             }
         }
     }
-
-    const char* foot = "Press 1-3 or click a cartridge  -  other ROMs: ROM browser (F1) or drag & drop";
+    const char* foot = "Press 1-9 or click a cartridge  -  other ROMs: ROM browser (F1) or drag & drop";
     ImVec2 fsz = ImGui::CalcTextSize(foot);
     dl->AddText(ImVec2(cx - fsz.x / 2, sc.y + sc.h - 28), ImGui::GetColorU32(ImGuiCol_TextDisabled), foot);
     ImGui::End();

@@ -58,6 +58,9 @@ struct Settings{
     bool phosphor = true;   // CRT effect: pixels fade out instead of vanishing
     bool scanlines = false; // CRT effect: dark horizontal lines
     bool glow = true;       // CRT effect: lit pixels bleed light into their neighbours
+    // Wait for the screen refresh after each sprite draw (at most one draw per frame), like the
+    // original COSMAC VIP. Newer games written for Octo expect this off. Set per game (games.h).
+    bool display_wait = true;
 };
 
 // ---------------- Everything the front end owns ----------------

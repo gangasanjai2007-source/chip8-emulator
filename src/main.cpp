@@ -158,6 +158,12 @@ void app_update_title(App& app){
 }
 
 void app_load_rom(App& app, const std::string& path){
+    // Known games (games.h) get their recommended mode, speed and screen-refresh setting
+    if(const GameInfo* g = find_game(path)){
+        app.chip8.cosmac_quirks = !g->needs_schip;
+        app.s.cycles_per_frame = g->speed;
+        app.s.display_wait = g->vblank;
+    }
     bool mode = app.chip8.cosmac_quirks; // keep the chosen quirks mode
     app.chip8 = Chip8();
     app.chip8.cosmac_quirks = mode;
@@ -241,6 +247,7 @@ void app_apply_recommended(App& app){
     bool mode_ok = (app.chip8.cosmac_quirks == !g->needs_schip);
     app.chip8.cosmac_quirks = !g->needs_schip;
     app.s.cycles_per_frame = g->speed;
+    app.s.display_wait = g->vblank;
     if(!mode_ok) app_restart(app); // the game must start again in the right mode
     app_update_title(app);
 }
@@ -339,6 +346,7 @@ void handle_input(App& app){
                 // ---- Quirks mode ----
                 if(k == SDLK_m){
                     chip8.cosmac_quirks = !chip8.cosmac_quirks;
+                    s.display_wait = chip8.cosmac_quirks; // the original CHIP-8 waits, SUPER-CHIP doesn't
                     app_update_title(app);
                 }
                 // ---- Savestates (K/L also work on Macs, where F-keys need fn) ----
@@ -450,7 +458,7 @@ void run_frame(App& app){
         }
         // quirk: the original CHIP-8 waited for the screen refresh after each
         // sprite draw, so at most one draw happens per frame
-        if(chip8.cosmac_quirks && chip8.drew_sprite) break;
+        if(s.display_wait && chip8.drew_sprite) break;
     }
     // FIX: timers count down once per frame = 60 Hz, independent of CPU speed
     chip8.tick_timers();
@@ -518,7 +526,7 @@ int main(int argc, char** argv){
     for(int i = 1; i < argc; i++){
         std::string arg = argv[i];
         // Optional: start in SUPER-CHIP quirks mode (e.g. ./chip8 roms/Blinky.ch8 --schip)
-        if(arg == "--schip") app.chip8.cosmac_quirks = false;
+        if(arg == "--schip"){ app.chip8.cosmac_quirks = false; app.s.display_wait = false; }
         else if(arg == "--classic") app.classic = true; // start without the panels
         else app_load_rom(app, arg);
     }

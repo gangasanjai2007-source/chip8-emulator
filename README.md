@@ -89,6 +89,32 @@ Game tips (also shown in the in-app Help tab) — **Pong:** left paddle `1`/`Q`,
 
 ---
 
+## Included games
+
+Start the emulator with no arguments to get the **"INSERT CARTRIDGE"** start screen, then press 1-9
+or click a cartridge. Every other ROM is in the ROM browser. Known games get their recommended
+mode, speed and screen-refresh setting automatically, and their controls in the Help tab.
+
+| # | Game | Controls | Notes |
+|---|---|---|---|
+| 1 | Pong | `1`/`Q` left paddle, `4`/`R` right paddle | 2 players |
+| 2 | Tetris | `Q` rotate, `W` left, `E` right, `A` drop | |
+| 3 | Blinky | `3` up, `E` down, `A` left, `S` right | SUPER-CHIP mode |
+| 4 | Dino Run | `W` jump | endless runner |
+| 5 | Br8kout | `A` left, `D` right | Breakout clone |
+| 6 | Super Pong | `E` serve, `A` left, `D` right | |
+| 7 | Snek | `W` `A` `S` `D` | Snake in 65 bytes |
+| 8 | Outlaw | `W` `A` `S` `D` move, `E` fire | wild-west duel |
+| 9 | Cave Explorer | `W` `A` `S` `D`, `E` crate, `Q` reset level | 16-screen adventure |
+| – | Flight Runner | `A` left, `D` right | in the ROM browser |
+| – | Mini Lights Out | all 16 keys = the 4×4 grid | puzzle, in the ROM browser |
+
+Games 4-9 and the last two come from the [CHIP-8 Archive](https://github.com/JohnEarnest/chip8Archive)
+(Creative Commons 0, public domain); authors are listed in [`roms/games/CREDITS.md`](roms/games/CREDITS.md).
+They were written for the Octo emulator, which does not wait for the screen refresh after each
+sprite draw, so the emulator turns **"Wait for screen refresh"** off for them (it is a checkbox in
+the Controls tab, and part of each game's entry in `src/games.h`).
+
 ## Bugs found and fixed
 
 | # | File | Bug | Symptom | Fix |
@@ -329,6 +355,8 @@ We used AI tools significantly and want to be transparent about it:
 - Original codebase: TatHack '26 / Tathva, NIT Calicut
 - Test ROMs: [Timendus/chip8-test-suite](https://github.com/Timendus/chip8-test-suite) (GPL-3.0)
 - Game ROMs: [kripod/chip8-roms](https://github.com/kripod/chip8-roms)
+- More games: [CHIP-8 Archive](https://github.com/JohnEarnest/chip8Archive) by John Earnest and
+  contributors (CC0), see `roms/games/CREDITS.md`
 - On-screen panels: [Dear ImGui](https://github.com/ocornut/imgui) v1.91.9 by Omar Cornut (MIT)
 - Title font: [Press Start 2P](https://fonts.google.com/specimen/Press+Start+2P) by CodeMan38
   (SIL Open Font License, see `assets/fonts/OFL.txt`)
