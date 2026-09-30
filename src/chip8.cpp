@@ -29,6 +29,27 @@ Chip8::Chip8(){
     initialise();
 }
 
+// SUPER-CHIP large font: digits 0-F, 8x10 pixels each (10 bytes), stored at 0x50
+uint8_t chip8_bigfont[160] = {
+    0xFF,0xFF,0xC3,0xC3,0xC3,0xC3,0xC3,0xC3,0xFF,0xFF, // 0
+    0x18,0x78,0x78,0x18,0x18,0x18,0x18,0x18,0xFF,0xFF, // 1
+    0xFF,0xFF,0x03,0x03,0xFF,0xFF,0xC0,0xC0,0xFF,0xFF, // 2
+    0xFF,0xFF,0x03,0x03,0xFF,0xFF,0x03,0x03,0xFF,0xFF, // 3
+    0xC3,0xC3,0xC3,0xC3,0xFF,0xFF,0x03,0x03,0x03,0x03, // 4
+    0xFF,0xFF,0xC0,0xC0,0xFF,0xFF,0x03,0x03,0xFF,0xFF, // 5
+    0xFF,0xFF,0xC0,0xC0,0xFF,0xFF,0xC3,0xC3,0xFF,0xFF, // 6
+    0xFF,0xFF,0x03,0x03,0x06,0x0C,0x18,0x18,0x18,0x18, // 7
+    0xFF,0xFF,0xC3,0xC3,0xFF,0xFF,0xC3,0xC3,0xFF,0xFF, // 8
+    0xFF,0xFF,0xC3,0xC3,0xFF,0xFF,0x03,0x03,0xFF,0xFF, // 9
+    0x7E,0xFF,0xC3,0xC3,0xC3,0xFF,0xFF,0xC3,0xC3,0xC3, // A
+    0xFC,0xFC,0xC3,0xC3,0xFC,0xFC,0xC3,0xC3,0xFC,0xFC, // B
+    0x3C,0xFF,0xC3,0xC0,0xC0,0xC0,0xC0,0xC3,0xFF,0x3C, // C
+    0xFC,0xFE,0xC3,0xC3,0xC3,0xC3,0xC3,0xC3,0xFE,0xFC, // D
+    0xFF,0xFF,0xC0,0xC0,0xFF,0xFF,0xC0,0xC0,0xFF,0xFF, // E
+    0xFF,0xFF,0xC0,0xC0,0xFF,0xFF,0xC0,0xC0,0xC0,0xC0  // F
+};
+const uint16_t BIGFONT_ADDR = 0x50;
+
 void Chip8::initialise(){
     pc = 0x200;
     opcode = 0;
@@ -40,6 +61,9 @@ void Chip8::initialise(){
     memset(v, 0, sizeof(v));
     memset(memory, 0, sizeof(memory));
     memset(key, 0, sizeof(key));
+    memset(rpl, 0, sizeof(rpl));
+    hires = false;
+    halted = false;
 
     load_fonts();
     delay_timer = 0;
@@ -49,6 +73,7 @@ void Chip8::initialise(){
 
 void Chip8::load_fonts(){
     for(int i=0; i<80; i++) memory[i] = chip8_fontset[i];
+    for(int i=0; i<160; i++) memory[BIGFONT_ADDR + i] = chip8_bigfont[i];
 }
 
 void Chip8::load_rom(const std::string& filename){
@@ -74,6 +99,7 @@ void Chip8::load_rom(const std::string& filename){
 }
 
 void Chip8::emulate_cycle(){
+    if(halted) return; // SUPER-CHIP 00FD stopped the program
     pc &= 0xFFF; // FIX: keep PC inside 4KB so a bad jump can't read outside memory
     opcode = memory[pc] << 8 | memory[(pc+1) & 0xFFF]; // 16-bit instruction
 
@@ -96,7 +122,28 @@ void Chip8::emulate_cycle(){
                     pc = stack[sp];
                     pc += 2;
                     break;
+                // ---- SUPER-CHIP display instructions ----
+                case 0x00FB: scroll_right(4); pc += 2; break; // scroll right 4 pixels
+                case 0x00FC: scroll_left(4);  pc += 2; break; // scroll left 4 pixels
+                case 0x00FD: halted = true; break;            // exit the program
+                case 0x00FE: // switch to normal resolution 64x32 (and clear)
+                    hires = false;
+                    std::memset(display, 0, sizeof(display));
+                    draw_flag = true;
+                    pc += 2;
+                    break;
+                case 0x00FF: // switch to high resolution 128x64 (and clear)
+                    hires = true;
+                    std::memset(display, 0, sizeof(display));
+                    draw_flag = true;
+                    pc += 2;
+                    break;
                 default:
+                    if((opcode & 0xFFF0) == 0x00C0){ // 00CN: scroll down N pixels
+                        scroll_down(opcode & 0xF);
+                        pc += 2;
+                        break;
+                    }
                     std::cerr << "Unknown opcode: 0x" << std::hex << opcode << std::endl;
                     pc += 2;
             }
@@ -214,7 +261,9 @@ void Chip8::emulate_cycle(){
             pc += 2;
             break;
         case 0xB000: // BXXX = jump to address XXX + v[0]
-            pc = (opcode & 0xFFF) + v[0];
+            // quirk: SUPER-CHIP reads it as BXNN = jump to XNN + VX
+            if(cosmac_quirks) pc = (opcode & 0xFFF) + v[0];
+            else pc = (opcode & 0xFFF) + v[(opcode & 0x0F00) >> 8];
             break;
         case 0xC000:{  // CXNN - v[x] = random_byte & NN
             static std::random_device rd;
@@ -225,26 +274,33 @@ void Chip8::emulate_cycle(){
         }
             break;
         case 0xD000:{ // DXYN = draw sprite at (v[x], v[y]) with height N
-            uint8_t x = v[(opcode & 0x0F00) >> 8], y = v[(opcode & 0x00F0) >> 4];
-            uint8_t height = opcode & 0x000F, pixel;
+            int w = screen_width(), h = screen_height(); // 64x32, or 128x64 in SUPER-CHIP hires
+            // The start position wraps around the screen; the sprite itself is clipped at the edge
+            int x = v[(opcode & 0x0F00) >> 8] % w, y = v[(opcode & 0x00F0) >> 4] % h;
+            int height = opcode & 0x000F;
+
+            // SUPER-CHIP: DXY0 draws a 16x16 sprite (2 bytes per row)
+            int sprite_w = 8;
+            if(height == 0 && !cosmac_quirks){ height = 16; sprite_w = 16; }
+            int bytes_per_row = sprite_w / 8;
 
             v[0xF] = 0; // Resetting collision flag
             // Looping through each row of the sprite
             for(int y_line=0; y_line<height; y_line++){
-                pixel = memory[(index + y_line) & 0xFFF]; // One row of sprite data (FIX: stay inside 4KB)
-                // Now looping through each pixel in the row (8)
-                for(int x_line=0; x_line<8; x_line++){
+                // One row of sprite data (FIX: stay inside 4KB)
+                uint16_t row = memory[(index + y_line*bytes_per_row) & 0xFFF];
+                if(sprite_w == 16) row = (row << 8) | memory[(index + y_line*2 + 1) & 0xFFF];
+                // Now looping through each pixel in the row
+                for(int x_line=0; x_line<sprite_w; x_line++){
                     // Check if current pixel is 1
-                    if((pixel & (0x80 >> x_line)) != 0){
-                        int screen_x = (x & 63) + x_line, screen_y = (y & 31) + y_line;
-                        if (screen_x >= 64 || screen_y >= 32) continue;
-                        int screen_index = screen_x + (screen_y*64); // 1D display array
+                    if((row & (1 << (sprite_w - 1 - x_line))) != 0){
+                        int screen_x = x + x_line, screen_y = y + y_line;
+                        if (screen_x >= w || screen_y >= h) continue; // clip at the edge
+                        int screen_index = screen_x + (screen_y*w); // 1D display array
                         // Checking for collision
                         if(display[screen_index] == 1) v[0xF] = 1; // Set collision flag
                         // We now flip the pixel
                         display[screen_index] ^= 1;
-
-
                     }
                 }
             }
@@ -300,6 +356,18 @@ void Chip8::emulate_cycle(){
                     index += v[(opcode & 0x0F00) >> 8];
                     pc += 2;
                     break;
+                case 0x0030: // FX30 (SUPER-CHIP) - index = location of the large 8x10 digit v[x]
+                    index = BIGFONT_ADDR + (v[(opcode & 0x0F00) >> 8] & 0xF) * 10;
+                    pc += 2;
+                    break;
+                case 0x0075: // FX75 (SUPER-CHIP) - save V0..VX to the RPL user flags
+                    for(int i=0; i<=((opcode & 0x0F00) >> 8); i++) rpl[i] = v[i];
+                    pc += 2;
+                    break;
+                case 0x0085: // FX85 (SUPER-CHIP) - load V0..VX from the RPL user flags
+                    for(int i=0; i<=((opcode & 0x0F00) >> 8); i++) v[i] = rpl[i];
+                    pc += 2;
+                    break;
                 case 0x0029: // FX29 - index = location of sprite for digit v[x]
                     index = (v[(opcode & 0x0F00) >> 8] & 0xF) * 5; // each font digit is 5 bytes
                     pc += 2;
@@ -346,12 +414,39 @@ void Chip8::tick_timers(){
     if(sound_timer > 0) sound_timer--;
 }
 
+// ---------------- SUPER-CHIP scrolling ----------------
+// The screen is a grid of w x h pixels stored row by row. Scrolling moves every pixel
+// and fills the uncovered area with 0 (off).
+void Chip8::scroll_down(int n){
+    int w = screen_width(), h = screen_height();
+    for(int y = h - 1; y >= 0; y--)
+        for(int x = 0; x < w; x++)
+            display[x + y*w] = (y >= n) ? display[x + (y-n)*w] : 0;
+    draw_flag = true;
+}
+
+void Chip8::scroll_right(int n){
+    int w = screen_width(), h = screen_height();
+    for(int y = 0; y < h; y++)
+        for(int x = w - 1; x >= 0; x--)
+            display[x + y*w] = (x >= n) ? display[(x-n) + y*w] : 0;
+    draw_flag = true;
+}
+
+void Chip8::scroll_left(int n){
+    int w = screen_width(), h = screen_height();
+    for(int y = 0; y < h; y++)
+        for(int x = 0; x < w; x++)
+            display[x + y*w] = (x + n < w) ? display[(x+n) + y*w] : 0;
+    draw_flag = true;
+}
+
 // ---------------- Savestates ----------------
 // File layout: 4-byte magic "C8SV", 1-byte version, then every part of the
 // machine state in a fixed order. Binary is used because the state is a fixed
 // ~6 KB block of bytes; no parsing library is needed.
 static const char SAVE_MAGIC[4] = {'C','8','S','V'};
-static const uint8_t SAVE_VERSION = 1;
+static const uint8_t SAVE_VERSION = 2; // v2: added SUPER-CHIP state (hires, halted, RPL flags)
 
 bool Chip8::save_state(const std::string& filename) const{
     std::ofstream f(filename, std::ios::binary);
@@ -370,6 +465,10 @@ bool Chip8::save_state(const std::string& filename) const{
     f.write((const char*)&delay_timer, sizeof(delay_timer));
     f.write((const char*)&sound_timer, sizeof(sound_timer));
     f.write((const char*)display, sizeof(display));
+    f.write((const char*)&hires, sizeof(hires));
+    f.write((const char*)&halted, sizeof(halted));
+    f.write((const char*)rpl, sizeof(rpl));
+    f.write((const char*)&cosmac_quirks, sizeof(cosmac_quirks));
     if(!f){
         std::cerr << "Error while writing " << filename << std::endl;
         return false;
@@ -405,6 +504,10 @@ bool Chip8::load_state(const std::string& filename){
     f.read((char*)&tmp.delay_timer, sizeof(tmp.delay_timer));
     f.read((char*)&tmp.sound_timer, sizeof(tmp.sound_timer));
     f.read((char*)tmp.display, sizeof(tmp.display));
+    f.read((char*)&tmp.hires, sizeof(tmp.hires));
+    f.read((char*)&tmp.halted, sizeof(tmp.halted));
+    f.read((char*)tmp.rpl, sizeof(tmp.rpl));
+    f.read((char*)&tmp.cosmac_quirks, sizeof(tmp.cosmac_quirks));
     if(!f){
         std::cerr << "Savestate file is truncated" << std::endl;
         return false;
@@ -423,14 +526,19 @@ bool Chip8::load_state(const std::string& filename){
 }
 
 // ---------------- Debugger ----------------
-// Turns a 2-byte opcode into readable assembly text, e.g. 0x6A05 -> "LD VA, 0x05"
-static std::string disassemble(uint16_t op){
+std::string Chip8::disassemble(uint16_t op){
     char buf[32];
     unsigned x = (op >> 8) & 0xF, y = (op >> 4) & 0xF, n = op & 0xF, nn = op & 0xFF, nnn = op & 0xFFF;
     switch(op & 0xF000){
         case 0x0000:
             if(op == 0x00E0) return "CLS";
             if(op == 0x00EE) return "RET";
+            if(op == 0x00FB) return "SCR";
+            if(op == 0x00FC) return "SCL";
+            if(op == 0x00FD) return "EXIT";
+            if(op == 0x00FE) return "LOW";
+            if(op == 0x00FF) return "HIGH";
+            if((op & 0xFFF0) == 0x00C0){ std::snprintf(buf, sizeof(buf), "SCD %u", n); break; }
             std::snprintf(buf, sizeof(buf), "SYS 0x%03X", nnn); break;
         case 0x1000: std::snprintf(buf, sizeof(buf), "JP 0x%03X", nnn); break;
         case 0x2000: std::snprintf(buf, sizeof(buf), "CALL 0x%03X", nnn); break;
@@ -461,6 +569,9 @@ static std::string disassemble(uint16_t op){
                 case 0x18: std::snprintf(buf, sizeof(buf), "LD ST, V%X", x); break;
                 case 0x1E: std::snprintf(buf, sizeof(buf), "ADD I, V%X", x); break;
                 case 0x29: std::snprintf(buf, sizeof(buf), "LD F, V%X", x); break;
+                case 0x30: std::snprintf(buf, sizeof(buf), "LD HF, V%X", x); break;
+                case 0x75: std::snprintf(buf, sizeof(buf), "LD R, V%X", x); break;
+                case 0x85: std::snprintf(buf, sizeof(buf), "LD V%X, R", x); break;
                 case 0x33: std::snprintf(buf, sizeof(buf), "LD B, V%X", x); break;
                 case 0x55: std::snprintf(buf, sizeof(buf), "LD [I], V0-V%X", x); break;
                 case 0x65: std::snprintf(buf, sizeof(buf), "LD V0-V%X, [I]", x); break;

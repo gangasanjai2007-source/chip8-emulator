@@ -11,7 +11,15 @@ class Chip8{
         void emulate_cycle(); // To execute one instruction
         void tick_timers(); // Counts the timers down; called once per frame (60 Hz)
         bool draw_flag; // When we need to redraw the screen;
-        uint8_t display[64*32];
+
+        // Screen buffer. Big enough for SUPER-CHIP high resolution (128x64).
+        // Pixel (x, y) is display[x + y * screen_width()]; in normal resolution
+        // only the first 64x32 = 2048 entries are used.
+        uint8_t display[128*64];
+        bool hires = false;   // SUPER-CHIP: true = 128x64 mode, false = 64x32
+        bool halted = false;  // SUPER-CHIP 00FD: program asked the interpreter to exit
+        int screen_width()  const { return hires ? 128 : 64; }
+        int screen_height() const { return hires ? 64 : 32; }
         uint8_t key[16]; // Keyboard of 16 keys
         uint8_t get_sound_timer() const {return sound_timer;} // For getting the value of sound timer
 
@@ -28,6 +36,17 @@ class Chip8{
 
         // Debugger: print PC, the next opcode and all registers to the terminal
         void print_state() const;
+        // Turns a 2-byte opcode into readable assembly text, e.g. 0x6A05 -> "LD VA, 0x05"
+        static std::string disassemble(uint16_t op);
+
+        // Read-only access to the CPU state, used by the on-screen debugger
+        uint16_t get_pc() const { return pc; }
+        uint16_t get_index() const { return index; }
+        uint8_t  get_sp() const { return sp; }
+        uint8_t  get_v(int i) const { return v[i & 0xF]; }
+        uint16_t get_stack(int i) const { return stack[i & 0xF]; }
+        uint8_t  get_delay_timer() const { return delay_timer; }
+        uint8_t  read_memory(uint16_t addr) const { return memory[addr & 0xFFF]; }
     private:
         uint8_t memory[4096]; // Memory of 4KB
         uint8_t v[16]; // 16 registers, V0 to VF
@@ -38,6 +57,10 @@ class Chip8{
         uint8_t delay_timer; // Counts down at 60Hz
         uint8_t sound_timer; // Beeps when greater than 0, counts down at 60Hz
         uint16_t opcode; // Current instruction
+        uint8_t rpl[16];  // SUPER-CHIP "RPL user flags" (FX75 / FX85)
+        void scroll_down(int n);   // SUPER-CHIP 00CN
+        void scroll_right(int n);  // SUPER-CHIP 00FB
+        void scroll_left(int n);   // SUPER-CHIP 00FC
         void initialise(); // Initialises everything
         void load_fonts(); // Loads font (0-9, A-F)
 };
