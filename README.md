@@ -4,8 +4,12 @@
 
 A CHIP-8 emulator in C++ with SDL2 graphics and audio. We started from the partially broken TatHack
 codebase, found and fixed its bugs in the CPU, timing, rendering and audio, and added speed control,
-savestates, colour palettes, rewind, a CRT effect, selectable sound waveforms, a switchable quirks mode
-and a pause/step debugger with a disassembler. Automated tests run on Linux, macOS and Windows on every push.
+savestates, colour palettes, rewind, a CRT effect, selectable sound waveforms, a switchable quirks mode,
+**SUPER-CHIP support** (128×64 hi-res, scrolling, 16×16 sprites), and an **on-screen control panel**
+(Dear ImGui) with a live debugger, breakpoints, a clickable keypad and a ROM browser.
+Automated tests run on Linux, macOS and Windows on every push.
+
+![Emulator with the control panel: Tetris in the Amber CRT palette with scanlines, live debugger and ROM browser](docs/screenshot.png)
 
 **Team:** <!-- TODO: Name (GitHub @username) for all 4 members -->
 
@@ -24,7 +28,8 @@ and a pause/step debugger with a disassembler. Automated tests run on Linux, mac
 3. Build and run:
    ```bash
    make
-   ./chip8.exe roms/Pong.ch8
+   ./chip8.exe                 # opens with the ROM browser
+   ./chip8.exe roms/Pong.ch8   # or start a game directly
    ```
 
 ### Linux / macOS
@@ -68,10 +73,13 @@ Chip-8 Keypad:          Keyboard:
 | `N` | Step one instruction while paused (prints disassembly + registers) |
 | `Backspace` | Restart the ROM |
 | Drag & drop | Drop a `.ch8` file on the window to load it |
+| `F1` | Show / hide the on-screen control panels |
 | `Esc` | Quit |
 
 The window title always shows the ROM, speed, palette and mode.
-Start in SUPER-CHIP mode with `./chip8 roms/Blinky.ch8 --schip` (Blinky needs it).
+Start in SUPER-CHIP mode with `./chip8 roms/Blinky.ch8 --schip` (Blinky needs it), and without
+the panels (classic 640×320 window) with `--classic`.
+Everything in the table can also be done with the mouse in the control panel.
 
 Game tips — **Pong:** left paddle `1`/`Q`, right paddle `4`/`R`. **Tetris:** `Q` rotate, `W` left, `E` right, `A` drop.
 
@@ -128,7 +136,8 @@ rejected with a message and the running game is untouched.
 ### 3. Colour palettes
 `P` cycles through a table of `{foreground RGB, background RGB}` palettes: **Classic** (white/black),
 **Green Screen** (#33FF33), **Amber CRT** (#FFB000), **Neon** (hot pink on dark purple) and
-**Game Boy** (dark green on light green). Adding a palette is one line in the `PALETTES` table.
+**Game Boy** (dark green on light green), plus a **Custom** palette whose two colours can be picked
+with colour pickers in the control panel. Adding a palette is one line in the `PALETTES` table.
 
 ### 4. Pause & step debugger with disassembler (bonus)
 `Space` pauses and `N` executes one instruction. Each step prints the program counter, the next
@@ -149,12 +158,13 @@ instructions, and games are written for one or the other. `M` switches between t
 | `8XY6/E` shift source | VY | VX |
 | `FX55/65` change I | I += X + 1 | unchanged |
 | Draws per frame | 1 (waits for screen refresh) | unlimited |
+| `BNNN` jump | NNN + V0 | XNN + VX |
 
-With CHIP-8 mode the Timendus `5-quirks` test passes all six checks; Blinky needs SUPER-CHIP mode.
+The Timendus `5-quirks` test passes all six checks in **both** modes; Blinky needs SUPER-CHIP mode.
 
 ### 6. Rewind
-Hold `Tab` to run time backwards. Every frame, a copy of the whole machine (the `Chip8` object, ~6 KB
-of plain arrays) is pushed onto a history of the last 600 frames (10 seconds, ~4 MB). While `Tab` is
+Hold `Tab` to run time backwards. Every frame, a copy of the whole machine (the `Chip8` object, ~12 KB
+of plain arrays) is pushed onto a history of the last 600 frames (10 seconds, ~7 MB). While `Tab` is
 held, one state per frame is popped off and restored, so the game plays backwards at normal speed.
 A `std::deque` is used so the oldest state can be dropped from the front in constant time. This
 reuses the same idea as savestates, but in memory instead of a file.
@@ -174,9 +184,47 @@ sound card provides. `[` / `]` change the pitch by one semitone (×2^(1/12)), fr
 The settings are shared with SDL's audio thread, so they are only changed while holding
 `SDL_LockAudioDevice`.
 
-### 9. Quality-of-life
+### 9. SUPER-CHIP support (bonus)
+The SUPER-CHIP extension (1991) adds a high-resolution mode and new instructions, all implemented:
+
+| Opcode | Meaning |
+|---|---|
+| `00FF` / `00FE` | Switch to 128×64 high resolution / back to 64×32 |
+| `00CN` | Scroll the screen down N pixels |
+| `00FB` / `00FC` | Scroll right / left 4 pixels |
+| `DXY0` | Draw a 16×16 sprite (32 bytes) |
+| `FX30` | Point I at the large 8×10 font digit VX |
+| `FX75` / `FX85` | Save / load V0..VX to the "RPL user flags" |
+| `00FD` | Exit the program |
+| `BXNN` | (SUPER-CHIP mode) jump to XNN + VX |
+
+The screen buffer is 128×64; pixel (x, y) is `display[x + y * screen_width()]`, so in 64×32 mode
+only the first 2048 entries are used and the original code paths are unchanged. The renderer
+draws the CHIP-8 screen into a small texture (one texel per CHIP-8 pixel) and lets the GPU stretch
+it to the window, which works for both resolutions and any window size. Savestates were updated to
+format version 2 to include the new state. Verified with the Timendus `8-scrolling` test (low and
+high resolution) and `5-quirks` in SUPER-CHIP mode.
+
+### 10. On-screen control panel with debugger and ROM browser (bonus)
+Built with [Dear ImGui](https://github.com/ocornut/imgui) (MIT licence, vendored in `third_party/imgui`),
+drawn with SDL's renderer. `F1` shows/hides it.
+- **Controls:** pause/step/restart, hold-to-rewind, speed slider, save/load, mode, palette (with
+  colour pickers for Custom), CRT options, waveform and pitch, test beep.
+- **Keypad:** the 16 CHIP-8 keys in their original 4×4 layout. They light up when pressed, and can be
+  held with the mouse.
+- **Debugger:** live registers, stack, and a disassembly listing with the current instruction
+  highlighted. **Breakpoints:** click a line (or type an address) and the emulator pauses when PC
+  reaches it.
+- **ROM browser:** lists every `.ch8` file under `roms/` (using `std::filesystem`) with a search box;
+  click to load. Running `chip8` with no arguments opens straight into it.
+
+ImGui is an "immediate mode" UI: the panels are rebuilt from the emulator state every frame, so they
+can never get out of sync with it. While a text box is being typed in, keys are not passed to the game.
+
+### 11. Quality-of-life
 Drag & drop ROM loading, `Backspace` restart, live status in the window title, software-renderer
-fallback when GPU acceleration is unavailable.
+fallback when GPU acceleration is unavailable. **Quick key taps are never lost:** a key pressed and
+released within the same 1/60 s frame is kept down until that frame has run, so the game always sees it.
 
 ---
 
@@ -186,8 +234,9 @@ fallback when GPU acceleration is unavailable.
 make test
 ```
 [`tests/run_tests.cpp`](tests/run_tests.cpp) runs the CPU core without a window:
-- runs the Timendus `corax+`, `flags` and `quirks` ROMs and compares the final screen with a
-  known-good result (a hash of the screen, recorded after checking by eye that every result is ✔);
+- runs the Timendus `corax+`, `flags`, `quirks` (both modes) and `scrolling` (low and high resolution)
+  ROMs, pressing menu keys at fixed frames, and compares the final screen with a known-good result
+  (a hash of the screen, recorded after checking by eye that every result is ✔);
 - checks that a savestate restores a game exactly, and that garbage/missing files are rejected
   without touching the running game.
 
@@ -202,18 +251,21 @@ runs `make test` on **Linux, macOS and Windows (MSYS2)** on every push.
 ## Architecture
 
 ```
-main.cpp (SDL2 front-end)                      chip8.cpp (CPU core)
+main.cpp (SDL2 front-end)                      chip8.cpp (CPU core, no SDL)
 ┌──────────────────────────────┐              ┌──────────────────────────────┐
 │ loop at 60 fps:              │              │ memory[4096], V[16], I, PC   │
 │  1. handle_input  ───────────┼── key[16] ──►│ stack[16], SP, timers        │
-│  2. N × emulate_cycle ───────┼─────────────►│ emulate_cycle(): fetch →     │
-│  3. tick_timers (60 Hz)      │              │   decode → execute           │
-│  4. audio: beep if ST > 0    │◄─ display ───│ display[64*32]               │
-│  5. draw_graphics (palette,  │              │ save_state / load_state      │
-│     phosphor, scanlines)     │              │ print_state (disassembler)   │
-│  6. push state for rewind    │              │                              │
-│  7. sleep rest of the frame  │              │                              │
+│  2. push state for rewind    │              │ emulate_cycle(): fetch →     │
+│  3. N × emulate_cycle ───────┼─────────────►│   decode → execute           │
+│  4. tick_timers (60 Hz)      │              │ CHIP-8 + SUPER-CHIP opcodes  │
+│  5. audio: beep if ST > 0    │◄─ display ───│ display[128*64], hires flag  │
+│  6. draw screen texture      │              │ save_state / load_state      │
+│  7. ui_draw (ui.cpp, ImGui)  │◄─ getters ───│ disassemble(), get_pc() ...  │
+│  8. sleep rest of the frame  │              │                              │
 └──────────────────────────────┘              └──────────────────────────────┘
+app.h: the state shared by main.cpp and ui.cpp (settings, sound, rewind history)
+         and the actions both keyboard and buttons use (load ROM, save, pause ...)
+tests/run_tests.cpp: runs the core without any window (used by `make test` and CI)
 ```
 - **Core / front-end split:** `Chip8` knows nothing about SDL, so the CPU can be tested and reasoned
   about separately from graphics, input and audio.
@@ -236,8 +288,8 @@ main.cpp (SDL2 front-end)                      chip8.cpp (CPU core)
 We used AI tools significantly and want to be transparent about it:
 - **Claude (Anthropic)** reviewed the original code and identified the bugs, and wrote most of the
   final implementation of the fixes and features (speed control, savestates, palettes, quirks mode,
-  debugger/disassembler, rewind, CRT effect, sound waveforms), the automated tests, the CI workflow
-  and this README.
+  debugger/disassembler, rewind, CRT effect, sound waveforms, SUPER-CHIP support, the ImGui control
+  panel, debugger and ROM browser), the automated tests, the CI workflow and this README.
 - **ChatGPT** was used by a team member for an earlier round of CPU fixes.
 - We set up the build on Windows (MSYS2) and macOS, ran every change against the Timendus test suite
   and the game ROMs, and reviewed the code so each of us can explain how it works.
@@ -249,4 +301,6 @@ We used AI tools significantly and want to be transparent about it:
 - Original codebase: TatHack '26 / Tathva, NIT Calicut
 - Test ROMs: [Timendus/chip8-test-suite](https://github.com/Timendus/chip8-test-suite) (GPL-3.0)
 - Game ROMs: [kripod/chip8-roms](https://github.com/kripod/chip8-roms)
-- Reference: Cowgod's CHIP-8 Technical Reference
+- On-screen panels: [Dear ImGui](https://github.com/ocornut/imgui) v1.91.9 by Omar Cornut (MIT)
+- Reference: Cowgod's CHIP-8 Technical Reference; SUPER-CHIP behaviour as described by the
+  Timendus test suite
