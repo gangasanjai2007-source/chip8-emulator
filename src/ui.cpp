@@ -13,6 +13,7 @@
 //   |              | browser   |            |
 //   +--------------+-----------+------------+
 #include "app.h"
+#include "games.h"
 #include "imgui.h"
 #include <algorithm>
 #include <cctype>
@@ -32,102 +33,208 @@ static void fixed_window(const char* title, float x, float y, float w, float h){
                                  ImGuiWindowFlags_NoCollapse);
 }
 
-// ---------------- Controls panel ----------------
-static void controls_panel(App& app){
+// ---------------- Help tab ----------------
+// Explains the controls for the loaded game (from games.h) and lists every emulator shortcut.
+static void help_tab(App& app){
+    const GameInfo* g = app.rom_path.empty() ? nullptr : find_game(app.rom_path);
+
+    ImGui::SeparatorText("This game");
+    if(app.rom_path.empty()){
+        ImGui::TextWrapped("No game loaded. Pick one in the ROM browser below the game screen.");
+    }
+    else if(g){
+        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f), "%s", g->title);
+        ImGui::TextWrapped("%s", g->about);
+        if(g->keys[0].action && ImGui::BeginTable("gamekeys", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH)){
+            ImGui::TableSetupColumn("Action");
+            ImGui::TableSetupColumn("Press");
+            ImGui::TableSetupColumn("CHIP-8 key");
+            ImGui::TableHeadersRow();
+            for(const GameKey& k : g->keys){
+                if(!k.action) break;
+                ImGui::TableNextColumn(); ImGui::Text("%s", k.action);
+                ImGui::TableNextColumn(); ImGui::TextColored(ImVec4(0.5f, 0.9f, 1.0f, 1.0f), "%s", PC_KEY_NAMES[k.key]);
+                ImGui::TableNextColumn(); ImGui::TextDisabled("%X", k.key);
+            }
+            ImGui::EndTable();
+        }
+        if(g->tips[0]) ImGui::TextWrapped("Tip: %s", g->tips);
+
+        // One click sets the mode and speed this game needs
+        bool mode_ok = (app.chip8.cosmac_quirks == !g->needs_schip);
+        if(!mode_ok || app.s.cycles_per_frame != g->speed){
+            char label[96];
+            std::snprintf(label, sizeof(label), "Apply: %s mode, speed %d",
+                          g->needs_schip ? "SUPER-CHIP" : "CHIP-8", g->speed);
+            ImGui::TextDisabled("Recommended settings:");
+            if(ImGui::Button(label)){
+                app.chip8.cosmac_quirks = !g->needs_schip;
+                app.s.cycles_per_frame = g->speed;
+                if(!mode_ok) app_restart(app); // the game must start again in the right mode
+                app_update_title(app);
+            }
+        }
+        else ImGui::TextDisabled("Recommended settings are active.");
+    }
+    else{
+        ImGui::TextWrapped("No built-in notes for this ROM. CHIP-8 games use the 4x4 keypad; many use "
+                           "2 / Q / E / S (CHIP-8 keys 2, 4, 6, 8) for up / left / right / down and "
+                           "W (key 5) as the action button. Watch the keypad below while you try keys, "
+                           "and use the debugger to see which keys the game checks (SKP / SKNP).");
+    }
+
+    ImGui::SeparatorText("Emulator shortcuts");
+    static const char* shortcuts[][2] = {
+        {"= / -",       "Faster / slower (instructions per frame)"},
+        {"Space",       "Pause / resume"},
+        {"N",           "Step one instruction (while paused)"},
+        {"Tab (hold)",  "Rewind time, up to 10 seconds"},
+        {"K or F5",     "Save state"},
+        {"L or F9",     "Load state"},
+        {"Backspace",   "Restart the game"},
+        {"P",           "Next colour palette"},
+        {"G",           "CRT phosphor fade on / off"},
+        {"H",           "Scanlines on / off"},
+        {"T",           "Next sound waveform"},
+        {"[ / ]",       "Beep pitch down / up"},
+        {"M",           "CHIP-8 / SUPER-CHIP mode"},
+        {"F1",          "Show / hide these panels"},
+        {"Drag & drop", "Drop a .ch8 file to load it"},
+        {"Esc",         "Quit"},
+    };
+    if(ImGui::BeginTable("shortcuts", 2, ImGuiTableFlags_RowBg)){
+        ImGui::TableSetupColumn("Key", ImGuiTableColumnFlags_WidthFixed, 90);
+        ImGui::TableSetupColumn("What it does");
+        for(auto& row : shortcuts){
+            ImGui::TableNextColumn(); ImGui::TextColored(ImVec4(0.5f, 0.9f, 1.0f, 1.0f), "%s", row[0]);
+            ImGui::TableNextColumn(); ImGui::TextWrapped("%s", row[1]);
+        }
+        ImGui::EndTable();
+    }
+
+    ImGui::SeparatorText("Keyboard = CHIP-8 keypad");
+    ImGui::TextDisabled("  1 2 3 4        1 2 3 C");
+    ImGui::TextDisabled("  Q W E R   =    4 5 6 D");
+    ImGui::TextDisabled("  A S D F        7 8 9 E");
+    ImGui::TextDisabled("  Z X C V        A 0 B F");
+}
+
+// ---------------- Side panel: Controls / Help tabs + keypad ----------------
+static void side_panel(App& app){
     Settings& s = app.s;
     fixed_window("Controls", UI_GAME_W, 0, UI_W - UI_GAME_W, UI_H);
 
     std::string name = app.rom_path.empty() ? "(none)" : fs::path(app.rom_path).filename().string();
     ImGui::Text("ROM: %s", name.c_str());
     ImGui::TextWrapped("%s", app.status.c_str());
-    ImGui::Separator();
 
-    // Run control
-    if(ImGui::Button(s.paused ? "Resume (Space)" : "Pause (Space)")) app_toggle_pause(app);
-    ImGui::SameLine();
-    ImGui::BeginDisabled(!s.paused);
-    if(ImGui::Button("Step (N)")) s.step_once = true;
-    ImGui::EndDisabled();
-    ImGui::SameLine();
-    if(ImGui::Button("Restart")) app_restart(app);
+    const float KEYPAD_H = 250; // space kept at the bottom for the keypad
+    ImGui::BeginChild("tabs", ImVec2(0, -KEYPAD_H));
+    if(ImGui::BeginTabBar("sidetabs")){
+        if(ImGui::BeginTabItem("Controls")){
+            // Run control
+            if(ImGui::Button(s.paused ? "Resume (Space)" : "Pause (Space)")) app_toggle_pause(app);
+            ImGui::SameLine();
+            ImGui::BeginDisabled(!s.paused);
+            if(ImGui::Button("Step (N)")) s.step_once = true;
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            if(ImGui::Button("Restart")) app_restart(app);
 
-    // Rewind while the button is held down (same as holding Tab)
-    static bool rewinding_by_mouse = false;
-    ImGui::Button("Hold to rewind (Tab)");
-    bool held = ImGui::IsItemActive();
-    if(held != rewinding_by_mouse){
-        s.rewinding = held;
-        rewinding_by_mouse = held;
-        app_update_title(app);
-    }
-    ImGui::SameLine();
-    ImGui::TextDisabled("%.1f s saved", app.history.size() / 60.0);
+            // Rewind while the button is held down (same as holding Tab)
+            static bool rewinding_by_mouse = false;
+            ImGui::Button("Hold to rewind (Tab)");
+            bool held = ImGui::IsItemActive();
+            if(held != rewinding_by_mouse){
+                s.rewinding = held;
+                rewinding_by_mouse = held;
+                app_update_title(app);
+            }
+            ImGui::SameLine();
+            ImGui::TextDisabled("%.1f s saved", app.history.size() / 60.0);
 
-    if(ImGui::SliderInt("Speed", &s.cycles_per_frame, MIN_CYCLES, MAX_CYCLES, "%d ops/frame"))
-        app_update_title(app);
+            if(ImGui::SliderInt("Speed", &s.cycles_per_frame, MIN_CYCLES, MAX_CYCLES, "%d ops/frame"))
+                app_update_title(app);
 
-    // Savestates
-    if(ImGui::Button("Save state (K)")) app_save_state(app);
-    ImGui::SameLine();
-    if(ImGui::Button("Load state (L)")) app_load_state(app);
+            // Savestates
+            if(ImGui::Button("Save state (K)")) app_save_state(app);
+            ImGui::SameLine();
+            if(ImGui::Button("Load state (L)")) app_load_state(app);
 
-    // Quirks mode
-    int mode = app.chip8.cosmac_quirks ? 0 : 1;
-    if(ImGui::Combo("Mode (M)", &mode, "CHIP-8 (original)\0SUPER-CHIP\0")){
-        app.chip8.cosmac_quirks = (mode == 0);
-        app_update_title(app);
-    }
-    ImGui::TextDisabled("Resolution: %dx%d%s", app.chip8.screen_width(), app.chip8.screen_height(),
-                        app.chip8.hires ? " (hi-res)" : "");
+            // Quirks mode
+            int mode = app.chip8.cosmac_quirks ? 0 : 1;
+            if(ImGui::Combo("Mode (M)", &mode, "CHIP-8 (original)\0SUPER-CHIP\0")){
+                app.chip8.cosmac_quirks = (mode == 0);
+                app_update_title(app);
+            }
+            ImGui::TextDisabled("Resolution: %dx%d%s", app.chip8.screen_width(), app.chip8.screen_height(),
+                                app.chip8.hires ? " (hi-res)" : "");
 
-    ImGui::SeparatorText("Display");
-    if(ImGui::BeginCombo("Palette (P)", PALETTES[s.palette].name)){
-        for(int i = 0; i < NUM_PALETTES; i++)
-            if(ImGui::Selectable(PALETTES[i].name, s.palette == i)){ s.palette = i; app_update_title(app); }
-        ImGui::EndCombo();
-    }
-    // The "Custom" palette can be edited with colour pickers
-    Palette& p = PALETTES[s.palette];
-    if(std::string(p.name) == "Custom"){
-        float on[3]  = {p.on_r / 255.f,  p.on_g / 255.f,  p.on_b / 255.f};
-        float off[3] = {p.off_r / 255.f, p.off_g / 255.f, p.off_b / 255.f};
-        if(ImGui::ColorEdit3("Pixels", on)){
-            p.on_r = (uint8_t)(on[0]*255); p.on_g = (uint8_t)(on[1]*255); p.on_b = (uint8_t)(on[2]*255);
+            ImGui::SeparatorText("Display");
+            if(ImGui::BeginCombo("Palette (P)", PALETTES[s.palette].name)){
+                for(int i = 0; i < NUM_PALETTES; i++)
+                    if(ImGui::Selectable(PALETTES[i].name, s.palette == i)){ s.palette = i; app_update_title(app); }
+                ImGui::EndCombo();
+            }
+            // The "Custom" palette can be edited with colour pickers
+            Palette& p = PALETTES[s.palette];
+            if(std::string(p.name) == "Custom"){
+                float on[3]  = {p.on_r / 255.f,  p.on_g / 255.f,  p.on_b / 255.f};
+                float off[3] = {p.off_r / 255.f, p.off_g / 255.f, p.off_b / 255.f};
+                if(ImGui::ColorEdit3("Pixels", on)){
+                    p.on_r = (uint8_t)(on[0]*255); p.on_g = (uint8_t)(on[1]*255); p.on_b = (uint8_t)(on[2]*255);
+                }
+                if(ImGui::ColorEdit3("Background", off)){
+                    p.off_r = (uint8_t)(off[0]*255); p.off_g = (uint8_t)(off[1]*255); p.off_b = (uint8_t)(off[2]*255);
+                }
+            }
+            ImGui::Checkbox("Phosphor fade (G)", &s.phosphor);
+            ImGui::SameLine();
+            ImGui::Checkbox("Scanlines (H)", &s.scanlines);
+
+            ImGui::SeparatorText("Sound");
+            int wave = app.audio.waveform;
+            float freq = (float)app.audio.frequency;
+            bool changed = ImGui::Combo("Waveform (T)", &wave, "Square\0Sine\0Triangle\0Sawtooth\0");
+            changed |= ImGui::SliderFloat("Pitch", &freq, 110.f, 1760.f, "%.0f Hz", ImGuiSliderFlags_Logarithmic);
+            if(changed) app_set_sound(app, wave, freq);
+            if(ImGui::Button("Test sound")) app.test_beep_frames = 30; // half a second
+            ImGui::EndTabItem();
         }
-        if(ImGui::ColorEdit3("Background", off)){
-            p.off_r = (uint8_t)(off[0]*255); p.off_g = (uint8_t)(off[1]*255); p.off_b = (uint8_t)(off[2]*255);
+        // Switch to the Help tab automatically when a known game is loaded
+        ImGuiTabItemFlags help_flags = app.open_help_tab ? ImGuiTabItemFlags_SetSelected : 0;
+        app.open_help_tab = false;
+        if(ImGui::BeginTabItem("Help", nullptr, help_flags)){
+            help_tab(app);
+            ImGui::EndTabItem();
         }
+        ImGui::EndTabBar();
     }
-    ImGui::Checkbox("Phosphor fade (G)", &s.phosphor);
-    ImGui::SameLine();
-    ImGui::Checkbox("Scanlines (H)", &s.scanlines);
-
-    ImGui::SeparatorText("Sound");
-    int wave = app.audio.waveform;
-    float freq = (float)app.audio.frequency;
-    bool changed = ImGui::Combo("Waveform (T)", &wave, "Square\0Sine\0Triangle\0Sawtooth\0");
-    changed |= ImGui::SliderFloat("Pitch", &freq, 110.f, 1760.f, "%.0f Hz", ImGuiSliderFlags_Logarithmic);
-    if(changed) app_set_sound(app, wave, freq);
-    if(ImGui::Button("Test sound")) app.test_beep_frames = 30; // half a second
+    ImGui::EndChild();
 
     // On-screen CHIP-8 keypad in its original layout. Buttons light up when a key is
     // pressed (keyboard or mouse); holding a button with the mouse presses that key.
-    ImGui::SeparatorText("Keypad");
+    // For known games, each key also shows what it does in that game.
+    const GameInfo* g = app.rom_path.empty() ? nullptr : find_game(app.rom_path);
+    ImGui::SeparatorText(g ? "Keypad (labels for this game)" : "Keypad");
     static const int layout[16] = {0x1,0x2,0x3,0xC, 0x4,0x5,0x6,0xD, 0x7,0x8,0x9,0xE, 0xA,0x0,0xB,0xF};
-    static const char* pc_keys[16] = {"X","1","2","3","Q","W","E","A","S","D","Z","C","4","R","F","V"};
     for(int i = 0; i < 16; i++){
         int k = layout[i];
+        const char* action = "";
+        if(g) for(const GameKey& gk : g->keys) if(gk.action && gk.key == k) action = gk.action;
+
         bool lit = app.chip8.key[k] || app.ui_keys[k];
-        if(lit) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.9f, 0.6f, 0.1f, 1.0f));
-        char label[16];
-        std::snprintf(label, sizeof(label), "%X\n(%s)", k, pc_keys[k]);
-        ImGui::Button(label, ImVec2(62, 40));
+        int colours = 0;
+        if(action[0]){ ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.45f, 0.35f, 1.0f)); colours++; }
+        if(lit){ ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.9f, 0.6f, 0.1f, 1.0f)); colours++; }
+        char label[48];
+        // "##k%X" gives each button a fixed ID, so changing the label text doesn't break holding it
+        std::snprintf(label, sizeof(label), "%X  (%s)\n%s##k%X", k, PC_KEY_NAMES[k], action, k);
+        ImGui::Button(label, ImVec2(70, 44));
         app.ui_keys[k] = ImGui::IsItemActive();
-        if(lit) ImGui::PopStyleColor();
+        ImGui::PopStyleColor(colours);
         if(i % 4 != 3) ImGui::SameLine();
     }
-
-    ImGui::Separator();
     ImGui::TextDisabled("F1 hides these panels");
     ImGui::End();
 }
@@ -242,7 +349,7 @@ static void rom_browser_panel(App& app){
 }
 
 void ui_draw(App& app){
-    controls_panel(app);
+    side_panel(app);
     debugger_panel(app);
     rom_browser_panel(app);
 }

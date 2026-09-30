@@ -1,4 +1,5 @@
 #include "app.h"
+#include "games.h"
 #include "imgui.h"
 #include "imgui_impl_sdl2.h"
 #include "imgui_impl_sdlrenderer2.h"
@@ -147,7 +148,14 @@ void app_load_rom(App& app, const std::string& path){
     app.rom_path = path;
     app.history.clear(); // old rewind states belong to the previous game
     app.s.paused = false;
-    app.status = "Loaded " + path;
+    // For the ROMs we know, show their controls right away (see games.h)
+    if(const GameInfo* g = find_game(path)){
+        std::string keys = game_key_summary(*g);
+        app.status = std::string("Loaded ") + g->title + (keys.empty() ? "" : ": " + keys) + "  (see Help tab)";
+        app.open_help_tab = true;
+        std::cout << app.status << std::endl;
+    }
+    else app.status = "Loaded " + path;
     app_update_title(app);
 }
 

@@ -20,7 +20,7 @@ $(TARGET): $(OBJECTS)
 	$(CXX) $(CXXFLAGS) -o $(TARGET) $(OBJECTS) $(SDL_LIBS)
 
 # Rebuild our files when the shared headers change
-src/main.o src/ui.o: src/app.h src/chip8.h
+src/main.o src/ui.o: src/app.h src/chip8.h src/games.h
 src/chip8.o: src/chip8.h
 
 %.o: %.cpp

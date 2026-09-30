@@ -76,6 +76,7 @@ struct App{
     bool key_went_down[16] = {false};
     bool release_pending[16] = {false};
     int test_beep_frames = 0;    // "Test sound" button: beep for this many frames
+    bool open_help_tab = false;  // switch the side panel to the Help tab (after loading a game)
     std::string status;          // last message, shown in the panel
 };
 
