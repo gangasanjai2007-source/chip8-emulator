@@ -9,7 +9,7 @@ savestates, colour palettes, rewind, a CRT effect, selectable sound waveforms, a
 (Dear ImGui) with a live debugger, breakpoints, a clickable keypad and a ROM browser.
 Automated tests run on Linux, macOS and Windows on every push.
 
-![Emulator with the control panel: Tetris in the Amber CRT palette with scanlines, live debugger and ROM browser](docs/screenshot.png)
+![Emulator with the control panel: Tetris with the Help tab, per-game keypad labels, live debugger and ROM browser](docs/screenshot.png)
 
 **Team:** <!-- TODO: Name (GitHub @username) for all 4 members -->
 
@@ -81,7 +81,7 @@ Start in SUPER-CHIP mode with `./chip8 roms/Blinky.ch8 --schip` (Blinky needs it
 the panels (classic 640×320 window) with `--classic`.
 Everything in the table can also be done with the mouse in the control panel.
 
-Game tips — **Pong:** left paddle `1`/`Q`, right paddle `4`/`R`. **Tetris:** `Q` rotate, `W` left, `E` right, `A` drop.
+Game tips (also shown in the in-app Help tab) — **Pong:** left paddle `1`/`Q`, right paddle `4`/`R`. **Tetris:** `Q` rotate, `W` left, `E` right, `A` drop. **Blinky:** `3` up, `E` down, `A` left, `S` right.
 
 ---
 
@@ -211,7 +211,13 @@ drawn with SDL's renderer. `F1` shows/hides it.
 - **Controls:** pause/step/restart, hold-to-rewind, speed slider, save/load, mode, palette (with
   colour pickers for Custom), CRT options, waveform and pitch, test beep.
 - **Keypad:** the 16 CHIP-8 keys in their original 4×4 layout. They light up when pressed, and can be
-  held with the mouse.
+  held with the mouse. For known games each key is **labelled with what it does in that game**
+  (e.g. "Rotate" on Q in Tetris).
+- **Help tab:** for the loaded game, a table of *action → keyboard key → CHIP-8 key*, tips, and an
+  **Apply recommended settings** button (e.g. Blinky: SUPER-CHIP mode, speed 30); below that, every
+  emulator shortcut and the keyboard ↔ keypad map. It opens automatically when a known game loads.
+  The per-game key assignments (in `src/games.h`) were found by reading each ROM's key-check
+  instructions (`EX9E`/`EXA1`) in the disassembler and seeing what the code does next.
 - **Debugger:** live registers, stack, and a disassembly listing with the current instruction
   highlighted. **Breakpoints:** click a line (or type an address) and the emulator pauses when PC
   reaches it.
