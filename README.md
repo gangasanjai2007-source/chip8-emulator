@@ -174,7 +174,7 @@ turns **"Wait for screen refresh"** off for them.
 
 ### 1. Configurable emulation speed
 The main loop runs at a fixed 60 frames per second. Each frame executes `cycles_per_frame`
-instructions (default 10 = 600 instructions/second, range 1–100), changed live with `=` / `-`.
+instructions (default 10 = 600 instructions/second, range 1–500), changed live with `=` / `-`.
 Timers tick once per frame, **independent of CPU speed**, so games keep correct timing even when
 the CPU is sped up. Frame pacing uses `SDL_GetPerformanceCounter` and only sleeps for the time left
 in the frame.
