@@ -23,7 +23,7 @@ const int REWIND_FRAMES = 600;
 // With the panels (F1) the game is drawn larger in the top-left corner.
 const int CLASSIC_W = 640, CLASSIC_H = 320;
 const int UI_W = 1280, UI_H = 720;
-const int UI_GAME_W = 960, UI_GAME_H = 480;
+const int UI_GAME_W = 960, UI_GAME_H = 510; // game + TV bezel area; panels fill the rest
 
 // ---------------- Colour palettes ----------------
 struct Palette{
@@ -57,6 +57,7 @@ struct Settings{
     bool rewinding = false; // true while Tab (or the Rewind button) is held
     bool phosphor = true;   // CRT effect: pixels fade out instead of vanishing
     bool scanlines = false; // CRT effect: dark horizontal lines
+    bool glow = true;       // CRT effect: lit pixels bleed light into their neighbours
 };
 
 // ---------------- Everything the front end owns ----------------
@@ -69,6 +70,10 @@ struct App{
     std::deque<Chip8> history;   // rewind history, newest state at the back
     std::string rom_path;        // empty = no ROM loaded yet
     bool show_ui = true;         // F1 shows/hides the panels
+    bool play_mode = false;      // F11: fullscreen "retro console" view, no developer panels
+    bool classic = false;        // --classic: original plain 640x320 window, no bezel
+    SDL_Rect screen_rect{0, 0, CLASSIC_W, CLASSIC_H}; // where the CHIP-8 screen is drawn
+    SDL_Rect bezel_rect{0, 0, 0, 0};                  // the TV frame around it (w = 0: none)
     int breakpoint = -1;         // pause when PC reaches this address (-1 = none)
     bool ui_keys[16] = {false};  // keypad buttons held with the mouse in the panel
     // A key pressed AND released within the same frame would never be seen by the game,
@@ -88,9 +93,13 @@ void app_load_state(App& app);
 void app_toggle_pause(App& app);
 void app_set_sound(App& app, int waveform, double frequency);
 void app_set_ui_visible(App& app, bool visible);
+void app_set_play_mode(App& app, bool on);
+void app_eject(App& app);
+void app_apply_recommended(App& app); // mode + speed from games.h for the loaded game
 void app_update_title(App& app);
 
 // The on-screen panels (ui.cpp)
+void ui_load_fonts();          // call once after ImGui is created
 void ui_draw(App& app);
 
 #endif

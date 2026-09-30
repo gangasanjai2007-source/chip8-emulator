@@ -117,6 +117,23 @@ void draw_graphics(SDL_Renderer* renderer, SDL_Texture* texture, Chip8& chip8,
     SDL_UpdateTexture(texture, &src, pixels, 128 * sizeof(uint32_t));
     SDL_RenderCopy(renderer, texture, &src, &dest);
 
+    // Glow effect: draw the screen 4 more times, slightly shifted, with "additive" blending
+    // at low strength. Bright pixels then bleed a little light onto their neighbours, like
+    // phosphor on a CRT. Only on dark backgrounds (on light ones it would wash out the image).
+    int bg_brightness = (pal.off_r + pal.off_g + pal.off_b) / 3;
+    if(s.glow && bg_brightness < 80){
+        int spread = std::max(2, dest.w / 320);
+        SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_ADD);
+        SDL_SetTextureAlphaMod(texture, 40);
+        const int offsets[4][2] = {{-1,0},{1,0},{0,-1},{0,1}};
+        for(auto& o : offsets){
+            SDL_Rect d = {dest.x + o[0]*spread, dest.y + o[1]*spread, dest.w, dest.h};
+            SDL_RenderCopy(renderer, texture, &src, &d);
+        }
+        SDL_SetTextureAlphaMod(texture, 255);
+        SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_NONE);
+    }
+
     // Scanline effect: darken every other row of screen pixels
     if(s.scanlines){
         SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
@@ -197,10 +214,66 @@ void app_set_ui_visible(App& app, bool visible){
     else        SDL_SetWindowSize(app.window, CLASSIC_W, CLASSIC_H);
 }
 
+// F11: fullscreen "retro console" view (TV bezel only, no developer panels)
+void app_set_play_mode(App& app, bool on){
+    app.play_mode = on;
+    SDL_SetWindowFullscreen(app.window, on ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+    if(!on) app_set_ui_visible(app, app.show_ui); // restore the previous window size
+    app.status = on ? "Play mode: F11 to return to the developer view" : "Developer view (F11 for play mode)";
+}
+
+// Remove the cartridge: back to the start screen
+void app_eject(App& app){
+    bool mode = app.chip8.cosmac_quirks;
+    app.chip8 = Chip8();
+    app.chip8.cosmac_quirks = mode;
+    app.rom_path.clear();
+    app.history.clear();
+    app.s.paused = false;
+    app.status = "Cartridge ejected. Pick a game.";
+    app_update_title(app);
+}
+
+// Mode and speed the loaded game needs (from games.h), e.g. Blinky: SUPER-CHIP, speed 30
+void app_apply_recommended(App& app){
+    const GameInfo* g = app.rom_path.empty() ? nullptr : find_game(app.rom_path);
+    if(!g) return;
+    bool mode_ok = (app.chip8.cosmac_quirks == !g->needs_schip);
+    app.chip8.cosmac_quirks = !g->needs_schip;
+    app.s.cycles_per_frame = g->speed;
+    if(!mode_ok) app_restart(app); // the game must start again in the right mode
+    app_update_title(app);
+}
+
+// Works out where the CHIP-8 screen and the TV bezel go for the current view
+void update_layout(App& app){
+    int ww, wh;
+    // Size of the area we actually draw into (after going fullscreen this is the whole screen)
+    SDL_GetRendererOutputSize(SDL_GetRenderer(app.window), &ww, &wh);
+    if(app.play_mode){
+        // Biggest whole-number scale that fits, so every CHIP-8 pixel is the same size
+        int scale = std::max(1, std::min((ww - 160) / 64, (wh - 240) / 32));
+        int sw = 64 * scale, sh = 32 * scale;
+        int sx = (ww - sw) / 2, sy = (wh - sh - 60) / 2;
+        app.screen_rect = {sx, sy, sw, sh};
+        app.bezel_rect  = {sx - 48, sy - 40, sw + 96, sh + 120};
+    }
+    else if(app.show_ui){
+        app.screen_rect = {32, 14, 896, 448}; // 14 screen pixels per CHIP-8 pixel (7 in hi-res)
+        app.bezel_rect  = {10, 2, 940, 504};
+    }
+    else{
+        app.screen_rect = {0, 0, CLASSIC_W, CLASSIC_H}; // the original plain window
+        app.bezel_rect  = {0, 0, 0, 0};
+    }
+}
+
 void print_controls(){
     std::cout << "\nControls:\n"
               << "  CHIP-8 keypad : 1234 / QWER / ASDF / ZXCV\n"
               << "  F1            : show / hide the control panels (mouse-driven)\n"
+              << "  F11           : play mode (fullscreen retro console view)\n"
+              << "  F2            : eject the cartridge (back to the start screen)\n"
               << "  = / -         : faster / slower emulation\n"
               << "  P             : next colour palette\n"
               << "  M             : toggle quirks mode (original CHIP-8 / SUPER-CHIP)\n"
@@ -254,7 +327,9 @@ void handle_input(App& app){
             }
 
             if(!repeat){
-                if(k == SDLK_F1) app_set_ui_visible(app, !app.show_ui);
+                if(k == SDLK_F1 && !app.play_mode) app_set_ui_visible(app, !app.show_ui);
+                if(k == SDLK_F11) app_set_play_mode(app, !app.play_mode);
+                if(k == SDLK_F2) app_eject(app);
 
                 // ---- Colour palette ----
                 if(k == SDLK_p){
@@ -435,23 +510,23 @@ int main(int argc, char** argv){
     ImGui::CreateContext();
     ImGui::GetIO().IniFilename = nullptr; // don't write an imgui.ini file
     ImGui::StyleColorsDark();
+    ui_load_fonts();
     ImGui_ImplSDL2_InitForSDLRenderer(app.window, renderer);
     ImGui_ImplSDLRenderer2_Init(renderer);
 
     // Command line: chip8 [ROM file] [--schip] [--classic]
-    bool classic = false;
     for(int i = 1; i < argc; i++){
         std::string arg = argv[i];
         // Optional: start in SUPER-CHIP quirks mode (e.g. ./chip8 roms/Blinky.ch8 --schip)
         if(arg == "--schip") app.chip8.cosmac_quirks = false;
-        else if(arg == "--classic") classic = true; // start without the panels
+        else if(arg == "--classic") app.classic = true; // start without the panels
         else app_load_rom(app, arg);
     }
     if(app.rom_path.empty()){
         app.status = "Pick a game in the ROM browser (or drag a .ch8 file onto the window)";
-        classic = false; // the ROM browser is in the panels, so they must be visible
+        app.classic = false; // the ROM browser is in the panels, so they must be visible
     }
-    app_set_ui_visible(app, !classic);
+    app_set_ui_visible(app, !app.classic);
     app_update_title(app);
     print_controls();
 
@@ -476,21 +551,27 @@ int main(int argc, char** argv){
             SDL_UnlockAudioDevice(app.audio_device);
         }
 
-        // Draw: background, game screen, then the panels on top
-        SDL_SetRenderDrawColor(renderer, 24, 24, 28, 255);
+        // Draw: background, TV bezel, game screen, then the panels on top
+        update_layout(app);
+        SDL_SetRenderDrawColor(renderer, 16, 15, 18, 255);
         SDL_RenderClear(renderer);
-        SDL_Rect game_area = app.show_ui ? SDL_Rect{0, 0, UI_GAME_W, UI_GAME_H}
-                                         : SDL_Rect{0, 0, CLASSIC_W, CLASSIC_H};
-        draw_graphics(renderer, screen_tex, app.chip8, PALETTES[app.s.palette], app.s, game_area);
-
-        if(app.show_ui){
-            ImGui_ImplSDLRenderer2_NewFrame();
-            ImGui_ImplSDL2_NewFrame();
-            ImGui::NewFrame();
-            ui_draw(app);
-            ImGui::Render();
-            ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), renderer);
+        if(app.bezel_rect.w > 0){
+            SDL_SetRenderDrawColor(renderer, 46, 42, 38, 255);  // plastic case
+            SDL_RenderFillRect(renderer, &app.bezel_rect);
+            SDL_Rect recess = {app.screen_rect.x - 8, app.screen_rect.y - 8,
+                               app.screen_rect.w + 16, app.screen_rect.h + 16};
+            SDL_SetRenderDrawColor(renderer, 12, 12, 12, 255);  // dark edge around the tube
+            SDL_RenderFillRect(renderer, &recess);
         }
+        draw_graphics(renderer, screen_tex, app.chip8, PALETTES[app.s.palette], app.s, app.screen_rect);
+
+        // The panels, bezel labels and start screen are drawn with ImGui (ui.cpp)
+        ImGui_ImplSDLRenderer2_NewFrame();
+        ImGui_ImplSDL2_NewFrame();
+        ImGui::NewFrame();
+        ui_draw(app);
+        ImGui::Render();
+        ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), renderer);
         SDL_RenderPresent(renderer);
 
         // FIX: wait ONCE per frame (the old code waited 16 ms after EVERY

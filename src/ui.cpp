@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cfloat>
 #include <cstdio>
 #include <filesystem>
 #include <string>
@@ -67,12 +68,7 @@ static void help_tab(App& app){
             std::snprintf(label, sizeof(label), "Apply: %s mode, speed %d",
                           g->needs_schip ? "SUPER-CHIP" : "CHIP-8", g->speed);
             ImGui::TextDisabled("Recommended settings:");
-            if(ImGui::Button(label)){
-                app.chip8.cosmac_quirks = !g->needs_schip;
-                app.s.cycles_per_frame = g->speed;
-                if(!mode_ok) app_restart(app); // the game must start again in the right mode
-                app_update_title(app);
-            }
+            if(ImGui::Button(label)) app_apply_recommended(app);
         }
         else ImGui::TextDisabled("Recommended settings are active.");
     }
@@ -99,6 +95,8 @@ static void help_tab(App& app){
         {"[ / ]",       "Beep pitch down / up"},
         {"M",           "CHIP-8 / SUPER-CHIP mode"},
         {"F1",          "Show / hide these panels"},
+        {"F11",         "Play mode: fullscreen retro console"},
+        {"F2",          "Eject the cartridge (start screen)"},
         {"Drag & drop", "Drop a .ch8 file to load it"},
         {"Esc",         "Quit"},
     };
@@ -140,6 +138,9 @@ static void side_panel(App& app){
             ImGui::EndDisabled();
             ImGui::SameLine();
             if(ImGui::Button("Restart")) app_restart(app);
+            if(ImGui::Button("Eject (F2)")) app_eject(app);
+            ImGui::SameLine();
+            if(ImGui::Button("Play mode: fullscreen (F11)")) app_set_play_mode(app, true);
 
             // Rewind while the button is held down (same as holding Tab)
             static bool rewinding_by_mouse = false;
@@ -191,6 +192,7 @@ static void side_panel(App& app){
             ImGui::Checkbox("Phosphor fade (G)", &s.phosphor);
             ImGui::SameLine();
             ImGui::Checkbox("Scanlines (H)", &s.scanlines);
+            ImGui::Checkbox("Glow", &s.glow);
 
             ImGui::SeparatorText("Sound");
             int wave = app.audio.waveform;
@@ -348,8 +350,202 @@ static void rom_browser_panel(App& app){
     ImGui::End();
 }
 
+// ================= Retro look =================
+static ImFont* font_title = nullptr; // Press Start 2P, 16 px (arcade pixel font)
+static ImFont* font_big   = nullptr; // Press Start 2P, 32 px
+
+void ui_load_fonts(){
+    ImGuiIO& io = ImGui::GetIO();
+    io.Fonts->AddFontDefault(); // ProggyClean: already a crisp pixel font, used for the panels
+    // The pixel font is loaded from the assets folder; if it is missing we fall back to the default
+    const char* path = "assets/fonts/PressStart2P-Regular.ttf";
+    std::error_code err;
+    if(fs::exists(path, err)){
+        font_title = io.Fonts->AddFontFromFileTTF(path, 16.0f);
+        font_big   = io.Fonts->AddFontFromFileTTF(path, 32.0f);
+    }
+}
+
+// Retro theme: square corners, 1-pixel borders, and every colour derived from the
+// currently selected palette, so the whole interface matches the game screen.
+static void apply_theme(const Palette& pal){
+    // Use the brighter of the palette's two colours as the accent (Game Boy's "on" colour is dark)
+    int on_lum = pal.on_r + pal.on_g + pal.on_b, off_lum = pal.off_r + pal.off_g + pal.off_b;
+    float ar, ag, ab;
+    if(on_lum >= off_lum){ ar = pal.on_r / 255.f;  ag = pal.on_g / 255.f;  ab = pal.on_b / 255.f; }
+    else                 { ar = pal.off_r / 255.f; ag = pal.off_g / 255.f; ab = pal.off_b / 255.f; }
+    auto accent = [&](float k, float a = 1.0f){ return ImVec4(ar * k, ag * k, ab * k, a); };
+    auto tint   = [&](float t){ return ImVec4(ar + (1 - ar) * t, ag + (1 - ag) * t, ab + (1 - ab) * t, 1.0f); };
+
+    ImGuiStyle& st = ImGui::GetStyle();
+    st.WindowRounding = st.FrameRounding = st.GrabRounding = st.TabRounding = 0.0f;
+    st.ChildRounding = st.PopupRounding = st.ScrollbarRounding = 0.0f;
+    st.WindowBorderSize = st.FrameBorderSize = 1.0f;
+    st.WindowTitleAlign = ImVec2(0.5f, 0.5f);
+
+    ImVec4* c = st.Colors;
+    c[ImGuiCol_Text]                 = tint(0.55f);
+    c[ImGuiCol_TextDisabled]         = accent(0.55f);
+    c[ImGuiCol_WindowBg]             = ImVec4(0.035f, 0.035f, 0.04f, 1.0f);
+    c[ImGuiCol_ChildBg]              = ImVec4(0.02f, 0.02f, 0.025f, 1.0f);
+    c[ImGuiCol_PopupBg]              = ImVec4(0.05f, 0.05f, 0.06f, 0.98f);
+    c[ImGuiCol_Border]               = accent(0.45f);
+    c[ImGuiCol_FrameBg]              = accent(0.12f);
+    c[ImGuiCol_FrameBgHovered]       = accent(0.22f);
+    c[ImGuiCol_FrameBgActive]        = accent(0.32f);
+    c[ImGuiCol_TitleBg]              = accent(0.18f);
+    c[ImGuiCol_TitleBgActive]        = accent(0.30f);
+    c[ImGuiCol_TitleBgCollapsed]     = accent(0.12f);
+    c[ImGuiCol_Button]               = accent(0.20f);
+    c[ImGuiCol_ButtonHovered]        = accent(0.38f);
+    c[ImGuiCol_ButtonActive]         = accent(0.60f);
+    c[ImGuiCol_Header]               = accent(0.22f);
+    c[ImGuiCol_HeaderHovered]        = accent(0.36f);
+    c[ImGuiCol_HeaderActive]         = accent(0.50f);
+    c[ImGuiCol_CheckMark]            = accent(1.0f);
+    c[ImGuiCol_SliderGrab]           = accent(0.80f);
+    c[ImGuiCol_SliderGrabActive]     = accent(1.0f);
+    c[ImGuiCol_Separator]            = accent(0.35f);
+    c[ImGuiCol_Tab]                  = accent(0.16f);
+    c[ImGuiCol_TabHovered]           = accent(0.40f);
+    c[ImGuiCol_TabSelected]          = accent(0.34f);
+    c[ImGuiCol_TableHeaderBg]        = accent(0.18f);
+    c[ImGuiCol_TableRowBgAlt]        = accent(0.06f);
+    c[ImGuiCol_ScrollbarGrab]        = accent(0.30f);
+    c[ImGuiCol_ScrollbarGrabHovered] = accent(0.45f);
+    c[ImGuiCol_ScrollbarGrabActive]  = accent(0.60f);
+    c[ImGuiCol_TextSelectedBg]       = accent(0.40f, 0.6f);
+}
+
+// Blinks at about 2 Hz, for "INSERT CARTRIDGE" style text
+static bool blink(){ return (int)(ImGui::GetTime() * 2.0) % 2 == 0; }
+
+// Text in the pixel font (falls back to the normal font if it wasn't found)
+static void pixel_text(ImDrawList* dl, ImFont* font, ImVec2 pos, ImU32 col, const char* text){
+    ImFont* f = font ? font : ImGui::GetFont();
+    float size = font ? font->FontSize : ImGui::GetFontSize();
+    dl->AddText(f, size, pos, col, text);
+}
+
+// Labels and lights on the TV bezel, drawn over the plastic frame main.cpp painted
+static void draw_bezel(App& app){
+    SDL_Rect b = app.bezel_rect, sc = app.screen_rect;
+    if(b.w == 0) return;
+    ImDrawList* dl = ImGui::GetBackgroundDrawList();
+
+    // Rounded corners and a thin highlight make the flat rectangles look like a TV case and tube
+    dl->AddRect(ImVec2(b.x, b.y), ImVec2(b.x + b.w, b.y + b.h), IM_COL32(90, 84, 76, 255), 14.0f, 0, 3.0f);
+    dl->AddRect(ImVec2(sc.x - 7, sc.y - 7), ImVec2(sc.x + sc.w + 7, sc.y + sc.h + 7),
+                IM_COL32(12, 12, 12, 255), 14.0f, 0, 10.0f);
+
+    float label_y = sc.y + sc.h + 14;
+    // Brand logo on the bottom-left of the case
+    pixel_text(dl, font_title, ImVec2(sc.x, label_y), IM_COL32(200, 190, 170, 255), "CHIP-8");
+    dl->AddText(ImVec2(sc.x + 112, label_y + 3), IM_COL32(150, 140, 125, 255),
+                app.chip8.cosmac_quirks ? "COMPUTER SYSTEM" : "SUPER-CHIP SYSTEM");
+
+    // Power light (always on) and sound light (on while the beep plays)
+    float lx = sc.x + sc.w - 70, ly = label_y + 8;
+    dl->AddCircleFilled(ImVec2(lx, ly), 5, IM_COL32(60, 230, 90, 255));
+    dl->AddText(ImVec2(lx + 9, ly - 7), IM_COL32(150, 140, 125, 255), "PWR");
+    bool beeping = app.chip8.get_sound_timer() > 0 || app.test_beep_frames > 0;
+    dl->AddCircleFilled(ImVec2(lx + 42, ly), 5, beeping ? IM_COL32(255, 70, 50, 255) : IM_COL32(70, 25, 20, 255));
+    dl->AddText(ImVec2(lx + 51, ly - 7), IM_COL32(150, 140, 125, 255), "SND");
+
+    // Middle of the bezel: controls of the loaded game, or what to do next
+    std::string hint;
+    const GameInfo* g = app.rom_path.empty() ? nullptr : find_game(app.rom_path);
+    if(g) hint = game_key_summary(*g);
+    if(app.s.rewinding) hint = "<< REWINDING";
+    else if(app.s.paused) hint = "PAUSED - Space to resume";
+    if(app.play_mode) hint += hint.empty() ? "F11: exit play mode" : "   |   F11: exit";
+    ImVec2 ts = ImGui::CalcTextSize(hint.c_str());
+    dl->AddText(ImVec2(sc.x + (sc.w - ts.x) / 2, label_y + 3), IM_COL32(220, 210, 190, 255), hint.c_str());
+}
+
+// Start screen shown when no cartridge is inserted: pick a game like on an old console
+static void start_screen(App& app){
+    SDL_Rect sc = app.screen_rect;
+    ImGui::SetNextWindowPos(ImVec2(sc.x, sc.y));
+    ImGui::SetNextWindowSize(ImVec2(sc.w, sc.h));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0, 0, 0, 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::Begin("##start", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+                                     ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImU32 col = ImGui::GetColorU32(ImGuiCol_CheckMark); // the palette's accent colour
+
+    // Title
+    const char* title = "CHIP-8";
+    ImFont* big = font_big ? font_big : ImGui::GetFont();
+    float big_size = font_big ? font_big->FontSize : ImGui::GetFontSize() * 3;
+    ImVec2 tsz = big->CalcTextSizeA(big_size, FLT_MAX, 0, title);
+    float cx = sc.x + sc.w / 2.0f, y = sc.y + sc.h * 0.10f;
+    dl->AddText(big, big_size, ImVec2(cx - tsz.x / 2, y), col, title);
+    if(blink()){
+        const char* sub = "INSERT CARTRIDGE";
+        ImFont* f = font_title ? font_title : ImGui::GetFont();
+        float fs = font_title ? font_title->FontSize : ImGui::GetFontSize();
+        ImVec2 ssz = f->CalcTextSizeA(fs, FLT_MAX, 0, sub);
+        dl->AddText(f, fs, ImVec2(cx - ssz.x / 2, y + big_size + 18), col, sub);
+    }
+
+    // One "cartridge" card per built-in game that exists on disk
+    static const char* const carts[] = {"roms/Pong.ch8", "roms/Tetris.ch8", "roms/Blinky.ch8"};
+    std::vector<const char*> found;
+    std::error_code err;
+    for(const char* c : carts) if(fs::exists(c, err)) found.push_back(c);
+
+    if(!found.empty()){
+        float card_w = std::min(260.0f, (sc.w - 60.0f) / 3.0f), card_h = std::min(150.0f, sc.h * 0.36f);
+        float total = found.size() * card_w + (found.size() - 1) * 20.0f;
+        float x0 = (sc.w - total) / 2.0f, y0 = sc.h * 0.44f;
+        for(size_t i = 0; i < found.size(); i++){
+            const GameInfo* g = find_game(found[i]);
+            ImGui::SetCursorPos(ImVec2(x0 + i * (card_w + 20.0f), y0));
+            char id[16];
+            std::snprintf(id, sizeof(id), "##cart%d", (int)i);
+            bool pressed = ImGui::Button(id, ImVec2(card_w, card_h));
+            pressed |= ImGui::IsKeyPressed((ImGuiKey)(ImGuiKey_1 + (int)i), false); // keys 1, 2, 3
+
+            // Card contents drawn on top of the button
+            ImVec2 p = ImGui::GetItemRectMin();
+            char num[16];
+            std::snprintf(num, sizeof(num), "[%d]", (int)i + 1);
+            pixel_text(dl, font_title, ImVec2(p.x + 10, p.y + 10), col, num);
+            pixel_text(dl, font_title, ImVec2(p.x + 60, p.y + 10), ImGui::GetColorU32(ImGuiCol_Text),
+                       g ? g->title : found[i]);
+            if(g){
+                ImVec4 clip(p.x + 8, p.y + 34, p.x + card_w - 8, p.y + card_h - 6);
+                dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(p.x + 10, p.y + 40),
+                            ImGui::GetColorU32(ImGuiCol_Text), g->about, nullptr, card_w - 20, &clip);
+                std::string keys = game_key_summary(*g);
+                dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(p.x + 10, p.y + card_h - 36),
+                            col, keys.c_str(), nullptr, card_w - 20, &clip);
+            }
+            if(pressed){
+                app_load_rom(app, found[i]);
+                app_apply_recommended(app); // e.g. Blinky switches to SUPER-CHIP by itself
+                break;
+            }
+        }
+    }
+
+    const char* foot = "Press 1-3 or click a cartridge  -  other ROMs: ROM browser (F1) or drag & drop";
+    ImVec2 fsz = ImGui::CalcTextSize(foot);
+    dl->AddText(ImVec2(cx - fsz.x / 2, sc.y + sc.h - 28), ImGui::GetColorU32(ImGuiCol_TextDisabled), foot);
+    ImGui::End();
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor();
+}
+
 void ui_draw(App& app){
-    side_panel(app);
-    debugger_panel(app);
-    rom_browser_panel(app);
+    apply_theme(PALETTES[app.s.palette]);
+    draw_bezel(app);
+    if(app.rom_path.empty()) start_screen(app);
+    if(app.show_ui && !app.play_mode){
+        side_panel(app);
+        debugger_panel(app);
+        rom_browser_panel(app);
+    }
 }
