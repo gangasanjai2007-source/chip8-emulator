@@ -1,17 +1,20 @@
-# CHIP-8 Emulator — TatHack '26
+# CHIP-8 Arcade — a CHIP-8 emulator and game console (TatHack '26)
 
 ![Build and test](https://github.com/gangasanjai2007-source/chip8-emulator/actions/workflows/build.yml/badge.svg)
 
 A CHIP-8 emulator in C++ with SDL2 graphics and audio. We started from the partially broken TatHack
 codebase, found and fixed its bugs in the CPU, timing, rendering and audio, and added speed control,
 savestates, colour palettes, rewind, a CRT effect, selectable sound waveforms, a switchable quirks mode,
-**SUPER-CHIP support** (128×64 hi-res, scrolling, 16×16 sprites), and an **on-screen control panel**
-(Dear ImGui) with a live debugger, breakpoints, a clickable keypad and a ROM browser.
+**SUPER-CHIP support** (128×64 hi-res, scrolling, 16×16 sprites), a **developer view** with a live
+debugger, breakpoints and ROM browser, and a complete **game-console front end**: a game library with
+live previews, a page per game, per-game visual themes, an in-game HUD, and Settings / Help pages.
 Automated tests run on Linux, macOS and Windows on every push.
 
-![Tetris in the Amber CRT palette: retro TV bezel, Help tab with the game's controls, labelled keypad, live debugger and ROM browser](docs/screenshot.png)
-
-![Start screen: "INSERT CARTRIDGE" with game cards](docs/start-screen.png)
+| Game library | Game page |
+|---|---|
+| ![Library: cards with live-captured thumbnails, categories and search](docs/library.png) | ![Details page: live preview in the game's theme, controls, Play](docs/details.png) |
+| **In-game HUD** (the CHIP-8 screen is never covered) | **Settings** |
+| ![Tetris in its Block Party theme with the HUD](docs/in-game.png) | ![Settings page: colour swatches, CRT effects](docs/settings.png) |
 
 **Team:** <!-- TODO: Name (GitHub @username) for all 4 members -->
 
@@ -59,11 +62,22 @@ Chip-8 Keypad:          Keyboard:
 └─┴─┴─┴─┘               └─┴─┴─┴─┘
 ```
 
-### Emulator controls (added by us)
+### In the game library
 | Key | Action |
 |-----|--------|
-| `=` / `-` | Increase / decrease emulation speed (1–100 instructions per frame) |
-| `P` | Cycle colour palette |
+| Arrows / mouse | Select a game (the selected card plays a live preview) |
+| `Enter` / click | Open the game's page (then `Enter` or **PLAY** to start, `←` `→` for other games) |
+| `Space` | Play the selected game straight away |
+| `Tab` | Next category (All, Arcade, Action, Puzzle, Adventure, Other, Tests) |
+| `/` | Search |
+| `S` | Settings |
+| `Esc` | Back (in the library: quit, after asking) |
+
+### In a game (added by us)
+| Key | Action |
+|-----|--------|
+| `=` / `-` | Increase / decrease emulation speed (1–500 instructions per frame) |
+| `P` | Cycle screen colours: the game's own theme → each palette |
 | `M` | Toggle quirks mode: original CHIP-8 ↔ SUPER-CHIP |
 | `Tab` (hold) | Rewind time (up to 10 seconds) |
 | `G` / `H` | CRT phosphor fade on/off / scanlines on/off |
@@ -74,16 +88,15 @@ Chip-8 Keypad:          Keyboard:
 | `Space` | Pause / resume (prints CPU state) |
 | `N` | Step one instruction while paused (prints disassembly + registers) |
 | `Backspace` | Restart the ROM |
-| Drag & drop | Drop a `.ch8` file on the window to load it |
-| `F1` | Show / hide the on-screen control panels |
-| `F11` | Play mode: fullscreen retro console (no developer panels) |
-| `F2` | Eject the cartridge (back to the start screen) |
-| `Esc` | Quit |
+| Drag & drop | Drop a `.ch8` file on the window to play it |
+| `F3` / `F4` | Help page / Settings page (the game pauses) |
+| `F1` | Developer view: debugger, breakpoints, ROM browser, panels |
+| `F11` | Fullscreen |
+| `Esc` or `F2` | Exit to the library |
 
-The window title always shows the ROM, speed, palette and mode.
-Start in SUPER-CHIP mode with `./chip8 roms/Blinky.ch8 --schip` (Blinky needs it), and without
-the panels (classic 640×320 window) with `--classic`.
-Everything in the table can also be done with the mouse in the control panel.
+Most of these are also buttons in the in-game HUD. `./chip8 <rom>` starts a game directly;
+`--schip` forces SUPER-CHIP mode and `--classic` gives the original plain 640×320 window
+(where `Esc` quits, as in the original).
 
 Game tips (also shown in the in-app Help tab) — **Pong:** left paddle `1`/`Q`, right paddle `4`/`R`. **Tetris:** `Q` rotate, `W` left, `E` right, `A` drop. **Blinky:** `3` up, `E` down, `A` left, `S` right.
 
@@ -91,29 +104,40 @@ Game tips (also shown in the in-app Help tab) — **Pong:** left paddle `1`/`Q`,
 
 ## Included games
 
-Start the emulator with no arguments to get the **"INSERT CARTRIDGE"** start screen, then press 1-9
-or click a cartridge. Every other ROM is in the ROM browser. Known games get their recommended
-mode, speed and screen-refresh setting automatically, and their controls in the Help tab.
+Run `./chip8` with no arguments to open the **game library**. Every game has its own card, page,
+visual theme and controls; its recommended mode, speed and screen-refresh setting are applied when
+it starts.
 
-| # | Game | Controls | Notes |
+| Game | Genre | Controls | Theme |
 |---|---|---|---|
-| 1 | Pong | `1`/`Q` left paddle, `4`/`R` right paddle | 2 players |
-| 2 | Tetris | `Q` rotate, `W` left, `E` right, `A` drop | |
-| 3 | Blinky | `3` up, `E` down, `A` left, `S` right | SUPER-CHIP mode |
-| 4 | Dino Run | `W` jump | endless runner |
-| 5 | Br8kout | `A` left, `D` right | Breakout clone |
-| 6 | Super Pong | `E` serve, `A` left, `D` right | |
-| 7 | Snek | `W` `A` `S` `D` | Snake in 65 bytes |
-| 8 | Outlaw | `W` `A` `S` `D` move, `E` fire | wild-west duel |
-| 9 | Cave Explorer | `W` `A` `S` `D`, `E` crate, `Q` reset level | 16-screen adventure |
-| – | Flight Runner | `A` left, `D` right | in the ROM browser |
-| – | Mini Lights Out | all 16 keys = the 4×4 grid | puzzle, in the ROM browser |
+| Super Pong | Arcade | `E` serve, `A` / `D` move | Hot Neon |
+| Pong | Arcade | `1`/`Q` left paddle, `4`/`R` right paddle (2 players) | Neon Arcade |
+| Tetris | Puzzle | `Q` rotate, `W` left, `E` right, `A` drop | Block Party |
+| Blinky | Arcade | `3` up, `E` down, `A` left, `S` right (SUPER-CHIP) | Ghost Maze |
+| Dino Run | Action | `W` jump | Desert Sunset |
+| Br8kout | Arcade | `A` / `D` move | Brick Wall |
+| Snek | Arcade | `W` `A` `S` `D` | Green Terminal |
+| Spacejam! | Action | `W` `A` `S` `D` (any key starts) | Deep Space |
+| Outlaw | Action | `W` `A` `S` `D` move, `E` fire | Wild West |
+| Cave Explorer | Adventure | `W` `A` `S` `D`, `E` crate, `Q` reset level | Deep Cave |
+| Glitch Ghost | Adventure | `W` `A` `S` `D`, `E` haunt | Haunted Night |
+| Piper | Action | `W` `A` `S` `D`, `E` hide | Beach Day |
+| Flight Runner | Action | `A` / `D` steer | Blue Sky |
+| Mini Lights Out | Puzzle | all 16 keys = the 4×4 grid | Light Grid |
+| 8 test ROMs | Test | see each page | Test Lab |
 
-Games 4-9 and the last two come from the [CHIP-8 Archive](https://github.com/JohnEarnest/chip8Archive)
-(Creative Commons 0, public domain); authors are listed in [`roms/games/CREDITS.md`](roms/games/CREDITS.md).
-They were written for the Octo emulator, which does not wait for the screen refresh after each
-sprite draw, so the emulator turns **"Wait for screen refresh"** off for them (it is a checkbox in
-the Controls tab, and part of each game's entry in `src/games.h`).
+Pong, Tetris and Blinky came with the original project. The other 11 games come from the
+[CHIP-8 Archive](https://github.com/JohnEarnest/chip8Archive) (Creative Commons 0, public domain);
+authors are listed in [`roms/games/CREDITS.md`](roms/games/CREDITS.md). They were written for the
+Octo emulator, which does not wait for the screen refresh after each sprite draw, so the emulator
+turns **"Wait for screen refresh"** off for them.
+
+### Adding a game
+1. Copy the `.ch8` file anywhere under `roms/`: it appears in the library straight away (category
+   *Other*, with a live thumbnail and the default "Retro TV" theme).
+2. Optionally add one entry to `GAMES` in [`src/games.h`](src/games.h): title, genre, author,
+   description, controls, recommended speed/mode, and a theme (two screen colours, background
+   gradient, accent colour and one of 15 decoration styles).
 
 ## Bugs found and fixed
 
@@ -235,9 +259,9 @@ it to the window, which works for both resolutions and any window size. Savestat
 format version 2 to include the new state. Verified with the Timendus `8-scrolling` test (low and
 high resolution) and `5-quirks` in SUPER-CHIP mode.
 
-### 10. On-screen control panel with debugger and ROM browser (bonus)
+### 10. Developer view: control panel, debugger and ROM browser (bonus)
 Built with [Dear ImGui](https://github.com/ocornut/imgui) (MIT licence, vendored in `third_party/imgui`),
-drawn with SDL's renderer. `F1` shows/hides it.
+drawn with SDL's renderer. Press `F1` in a game (or the **DEV VIEW** button) to switch to it.
 - **Controls:** pause/step/restart, hold-to-rewind, speed slider, save/load, mode, palette (with
   colour pickers for Custom), CRT options, waveform and pitch, test beep.
 - **Keypad:** the 16 CHIP-8 keys in their original 4×4 layout. They light up when pressed, and can be
@@ -252,27 +276,40 @@ drawn with SDL's renderer. `F1` shows/hides it.
   highlighted. **Breakpoints:** click a line (or type an address) and the emulator pauses when PC
   reaches it.
 - **ROM browser:** lists every `.ch8` file under `roms/` (using `std::filesystem`) with a search box;
-  click to load. Running `chip8` with no arguments opens straight into it.
+  click to load.
 
 ImGui is an "immediate mode" UI: the panels are rebuilt from the emulator state every frame, so they
 can never get out of sync with it. While a text box is being typed in, keys are not passed to the game.
 
-### 11. Retro console look
-The whole front end is styled like an old home computer on a CRT TV, without changing how the
-emulator works:
-- **TV bezel** around the screen with a "CHIP-8 COMPUTER SYSTEM" badge (it becomes "SUPER-CHIP
-  SYSTEM" in that mode), a power light, a **sound light that glows while the beep plays**, and the
-  loaded game's controls printed on the case.
-- **Start screen:** with no ROM loaded, the TV shows a blinking "INSERT CARTRIDGE" and a card per
-  game; click one or press 1-3 (the recommended mode and speed are applied automatically).
-- **Theme follows the palette:** every panel colour is derived from the selected palette, so
-  Amber CRT gives an amber interface, Game Boy a green one, and so on. Square corners and
-  1-pixel borders; titles use the **Press Start 2P** arcade pixel font.
-- **Glow:** lit pixels bleed a little light into their neighbours (the screen texture is drawn
-  four more times, shifted by a few pixels, with additive blending at low strength).
-- **Play mode (`F11`):** fullscreen, just the TV, with the largest whole-number scale that fits so
-  every CHIP-8 pixel stays the same size.
-- `--classic` still gives the original plain 640×320 window.
+### 11. Game-console front end (bonus)
+The emulator opens like a small games console instead of a terminal program:
+- **Game library** (`src/hub.cpp`, `src/library.cpp`): a card per ROM found under `roms/`, with
+  genre, description and a **thumbnail that is a real capture of the game**: each ROM is run for
+  five seconds without a window and its busiest screen is kept, so there are no image files. The
+  selected card plays a **live preview** (attract mode). Categories, search, keyboard and mouse
+  navigation, cards that slide in, a glow on the selected card, and empty / loading / error states
+  (a broken file shows "NO SIGNAL" static and a clear error message instead of crashing).
+- **Game page:** large live preview in the game's theme, author and licence, description,
+  controls as key caps, tips, the settings it runs with, and Play / Back.
+- **Per-game visual identity** (`src/themes.cpp`): every game has its own two screen colours,
+  background and decorated frame, all drawn with lines, rectangles, circles and triangles (15
+  styles: neon synthwave floor, falling blocks, green terminal with scrolling hex, ghost maze with
+  pellets, brick wall, starfield with a planet, desert sunset, wooden planks, cave, clouds, light
+  grid, beach with waves, graveyard at night, blueprint lab, retro TV). The ImGui interface
+  also takes the game's accent colour.
+- **In-game HUD:** top bar (game, RUNNING / PAUSED / REWIND light, speed, colours, mode, FPS) and
+  a bottom bar of buttons (Library, Pause, Save, Load, hold-to-Rewind, Restart, Help, Settings,
+  Dev view) plus the game's controls as key caps.
+  **The CHIP-8 screen is never covered:** everything made with ImGui is drawn first, and the game
+  picture is drawn on top of it afterwards.
+- **Settings page:** emulation speed with presets, mode, screen-refresh wait; colour swatches and
+  custom colours; CRT effects; waveform buttons that show their shape, pitch, test beep; savestate
+  info; the full keypad map and shortcuts; credits.
+- **Help page:** the current game's controls, tips, and the keypad with this game's actions on it.
+- **Look:** retro arcade + modern: Press Start 2P pixel font, glows, key caps, fades between
+  screens, scanlines, square pixels kept sharp at any size (nearest-neighbour scaling).
+- **Fullscreen (`F11`)** keeps the theme and scales the screen by a whole number, and
+  `--classic` still gives the original plain 640×320 window.
 
 ### 12. Quality-of-life
 Drag & drop ROM loading, `Backspace` restart, live status in the window title, software-renderer
@@ -316,8 +353,13 @@ main.cpp (SDL2 front-end)                      chip8.cpp (CPU core, no SDL)
 │  7. ui_draw (ui.cpp, ImGui)  │◄─ getters ───│ disassemble(), get_pc() ...  │
 │  8. sleep rest of the frame  │              │                              │
 └──────────────────────────────┘              └──────────────────────────────┘
-app.h: the state shared by main.cpp and ui.cpp (settings, sound, rewind history)
-         and the actions both keyboard and buttons use (load ROM, save, pause ...)
+app.h        state shared by the front-end files (settings, screens, rewind history) and the
+             actions both keys and buttons use (play, save, pause, exit to library ...)
+hub.cpp      library, game page, in-game HUD, settings and help pages (ImGui)
+library.cpp  finds ROMs, makes thumbnails and the live preview by running the core headless
+themes.cpp   the 15 decoration styles around the screen
+games.h      notes for each known game: genre, controls, settings, theme
+ui.cpp       developer view panels (F1), fonts, colour theme
 tests/run_tests.cpp: runs the core without any window (used by `make test` and CI)
 ```
 - **Core / front-end split:** `Chip8` knows nothing about SDL, so the CPU can be tested and reasoned
@@ -342,8 +384,8 @@ We used AI tools significantly and want to be transparent about it:
 - **Claude (Anthropic)** reviewed the original code and identified the bugs, and wrote most of the
   final implementation of the fixes and features (speed control, savestates, palettes, quirks mode,
   debugger/disassembler, rewind, CRT effect, sound waveforms, SUPER-CHIP support, the ImGui control
-  panel, debugger and ROM browser, the retro console look), the automated tests, the CI workflow and
-  this README.
+  panel, debugger and ROM browser, the game library, game pages, themes, HUD and settings), the
+  automated tests, the CI workflow and this README.
 - **ChatGPT** was used by a team member for an earlier round of CPU fixes.
 - We set up the build on Windows (MSYS2) and macOS, ran every change against the Timendus test suite
   and the game ROMs, and reviewed the code so each of us can explain how it works.
