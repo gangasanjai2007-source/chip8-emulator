@@ -9,7 +9,9 @@ savestates, colour palettes, rewind, a CRT effect, selectable sound waveforms, a
 (Dear ImGui) with a live debugger, breakpoints, a clickable keypad and a ROM browser.
 Automated tests run on Linux, macOS and Windows on every push.
 
-![Emulator with the control panel: Tetris with the Help tab, per-game keypad labels, live debugger and ROM browser](docs/screenshot.png)
+![Tetris in the Amber CRT palette: retro TV bezel, Help tab with the game's controls, labelled keypad, live debugger and ROM browser](docs/screenshot.png)
+
+![Start screen: "INSERT CARTRIDGE" with game cards](docs/start-screen.png)
 
 **Team:** <!-- TODO: Name (GitHub @username) for all 4 members -->
 
@@ -74,6 +76,8 @@ Chip-8 Keypad:          Keyboard:
 | `Backspace` | Restart the ROM |
 | Drag & drop | Drop a `.ch8` file on the window to load it |
 | `F1` | Show / hide the on-screen control panels |
+| `F11` | Play mode: fullscreen retro console (no developer panels) |
+| `F2` | Eject the cartridge (back to the start screen) |
 | `Esc` | Quit |
 
 The window title always shows the ROM, speed, palette and mode.
@@ -227,7 +231,24 @@ drawn with SDL's renderer. `F1` shows/hides it.
 ImGui is an "immediate mode" UI: the panels are rebuilt from the emulator state every frame, so they
 can never get out of sync with it. While a text box is being typed in, keys are not passed to the game.
 
-### 11. Quality-of-life
+### 11. Retro console look
+The whole front end is styled like an old home computer on a CRT TV, without changing how the
+emulator works:
+- **TV bezel** around the screen with a "CHIP-8 COMPUTER SYSTEM" badge (it becomes "SUPER-CHIP
+  SYSTEM" in that mode), a power light, a **sound light that glows while the beep plays**, and the
+  loaded game's controls printed on the case.
+- **Start screen:** with no ROM loaded, the TV shows a blinking "INSERT CARTRIDGE" and a card per
+  game; click one or press 1-3 (the recommended mode and speed are applied automatically).
+- **Theme follows the palette:** every panel colour is derived from the selected palette, so
+  Amber CRT gives an amber interface, Game Boy a green one, and so on. Square corners and
+  1-pixel borders; titles use the **Press Start 2P** arcade pixel font.
+- **Glow:** lit pixels bleed a little light into their neighbours (the screen texture is drawn
+  four more times, shifted by a few pixels, with additive blending at low strength).
+- **Play mode (`F11`):** fullscreen, just the TV, with the largest whole-number scale that fits so
+  every CHIP-8 pixel stays the same size.
+- `--classic` still gives the original plain 640×320 window.
+
+### 12. Quality-of-life
 Drag & drop ROM loading, `Backspace` restart, live status in the window title, software-renderer
 fallback when GPU acceleration is unavailable. **Quick key taps are never lost:** a key pressed and
 released within the same 1/60 s frame is kept down until that frame has run, so the game always sees it.
@@ -295,7 +316,8 @@ We used AI tools significantly and want to be transparent about it:
 - **Claude (Anthropic)** reviewed the original code and identified the bugs, and wrote most of the
   final implementation of the fixes and features (speed control, savestates, palettes, quirks mode,
   debugger/disassembler, rewind, CRT effect, sound waveforms, SUPER-CHIP support, the ImGui control
-  panel, debugger and ROM browser), the automated tests, the CI workflow and this README.
+  panel, debugger and ROM browser, the retro console look), the automated tests, the CI workflow and
+  this README.
 - **ChatGPT** was used by a team member for an earlier round of CPU fixes.
 - We set up the build on Windows (MSYS2) and macOS, ran every change against the Timendus test suite
   and the game ROMs, and reviewed the code so each of us can explain how it works.
@@ -308,5 +330,7 @@ We used AI tools significantly and want to be transparent about it:
 - Test ROMs: [Timendus/chip8-test-suite](https://github.com/Timendus/chip8-test-suite) (GPL-3.0)
 - Game ROMs: [kripod/chip8-roms](https://github.com/kripod/chip8-roms)
 - On-screen panels: [Dear ImGui](https://github.com/ocornut/imgui) v1.91.9 by Omar Cornut (MIT)
+- Title font: [Press Start 2P](https://fonts.google.com/specimen/Press+Start+2P) by CodeMan38
+  (SIL Open Font License, see `assets/fonts/OFL.txt`)
 - Reference: Cowgod's CHIP-8 Technical Reference; SUPER-CHIP behaviour as described by the
   Timendus test suite
