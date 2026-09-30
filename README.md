@@ -16,9 +16,8 @@ Automated tests run on Linux, macOS and Windows on every push.
 | **In-game HUD** (the CHIP-8 screen is never covered) | **Settings** |
 | ![Tetris in its Block Party theme with the HUD](docs/in-game.png) | ![Settings page: colour swatches, CRT effects](docs/settings.png) |
 
-**Team:** <!-- TODO: Name (GitHub @username) for all 4 members -->
+**Team:** NYX — Layana Renjith ([@LayanaRenjith](https://github.com/LayanaRenjith)), Joel Jery ([@JoelJery](https://github.com/JoelJery)), Pooja Ramesh ([@poojarameshok-commits](https://github.com/poojarameshok-commits)), Ganga S ([@gangasanjai2007](https://github.com/gangasanjai2007))
 
-**Demo video:** <!-- TODO: unlisted YouTube link -->
 
 ---
 
@@ -370,12 +369,13 @@ tests/run_tests.cpp: runs the core without any window (used by `make test` and C
 ---
 
 ## Team contributions
+## Team contributions
 | Member | Worked on |
 |--------|-----------|
-| <!-- name --> | <!-- TODO: be accurate: what each person actually did, tested and presents --> |
-| <!-- name --> | |
-| <!-- name --> | |
-| <!-- name --> | |
+| Layana Renjith | CPU opcode bugs (00EE return, 8XY flags, FX33, FX55/65, FX0A); verified fixes with the Timendus corax+ and flags ROMs |
+| Ganga S | Timing (per-frame timers, delay fix) and features: configurable speed, savestates |
+| Pooja Ramesh | Rendering and audio fixes (screen orientation, 440 Hz beep, audio thread locking) and colour palettes |
+| Joel Jery | Build and Windows setup, automated tests and CI, extra features (debugger, rewind, library UI), demo video |
 
 ---
 
